@@ -1,50 +1,8 @@
 #lang racket/gui
 
-;; A position is represented by a map from squares to pieces, where a square
-;; is a pair of integers and piece is one of the following symbols:
-;; 'white-pawn   'black-pawn
-;; 'white-rook   'black-rook
-;; 'white-knight 'black-knight
-;; 'white-bishop 'black-bishop
-;; 'white-queen  'black-queen
-;; 'white-king   'black-king
-;; The coordinates start from a1 and are 0-indexed. For example e4 is (4 . 3).
-;; The starting position, for example, is represented as
-;; (make-hash '(((0 . 0) . white-rook)
-;;              ((0 . 1) . white-pawn)
-;;              ((1 . 0) . white-knight) ...))
-  
-;; Convert a FEN-encoded position into a hash table of square-piece pairs
-(define (interpret-fen fen)
-  ; Interpret one character from a FEN string. The accumulator is a pair
-  ; (f . l) where f is the number of the current file and l is the list
-  ; of pieces seen so far.
-  (define (fold-fun r char acc)
-    (if (char-numeric? char)
-        (cons (+ (car acc) (- (char->integer char) 48)) (cdr acc))
-        (let ([symb (cond
-                       [(equal? char #\r) 'black-rook]
-                       [(equal? char #\n) 'black-knight]
-                       [(equal? char #\b) 'black-bishop]
-                       [(equal? char #\q) 'black-queen]
-                       [(equal? char #\k) 'black-king]
-                       [(equal? char #\p) 'black-pawn]
-                       [(equal? char #\R) 'white-rook]
-                       [(equal? char #\N) 'white-knight]
-                       [(equal? char #\B) 'white-bishop]
-                       [(equal? char #\Q) 'white-queen]
-                       [(equal? char #\K) 'white-king]
-                       [(equal? char #\P) 'white-pawn]
-                       [else (raise "Unrecognized piece")])])
-          (cons (+ (car acc) 1)
-                (cons (cons (cons (car acc) r) symb) (cdr acc))))))
-  ; Handle a single rank from the FEN string.
-  (define (interpret-rank str r)
-    (cdr (foldl (lambda (c a) (fold-fun r c a))
-                (cons 0 '()) (string->list str))))
-  (let ([ranks (string-split fen "/")])
-    (make-hash (append-map interpret-rank ranks (range 7 -1 -1)))))
+(require "chess.rkt")
 
+;; Choose a filename based on the piece type and size.
 (define (piece-image-fn size piece)
   (let ([basename
          (cond
@@ -66,20 +24,27 @@
 ;; A GUI object representing a chess position.
 (define chess-board%
   (class canvas%
-    (inherit get-dc get-width get-height)
+    (inherit get-dc get-width get-height refresh)
     ; The starting position, given as a FEN string (default: starting position).
     (init [position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"])
     ; The side who's turn it is, either 'white or 'black (default: 'white).
     (init [to-move 'white])
+    (init [castling '(((white . kingside) . #t) ((white . queenside) . #t)
+                      ((black . kingside) . #t) ((black . queenside) . #t))])
+    (init [en-passant '()])
 
-    (define side-to-move to-move)
-    (define board-position (interpret-fen position))
+    (define board-position (new position% [position position]
+                                          [to-move to-move]
+                                          [castling castling]
+                                          [en-passant en-passant]))
     (define square-size 0)
     (define image-size 0)
     (define start-x 0)
     (define start-y 0)
-    (define highlight-square '())
-    
+    (define selected-square '())
+    (define drag-x 0)
+    (define drag-y 0)
+
     (define/private (handle-click event)
       (let* ([x (- (send event get-x) start-x)]
              [y (- (send event get-y) start-y)]
@@ -87,20 +52,27 @@
              [ysq (- 7 (quotient y square-size))]
              [xc (+ (* xsq square-size) (quotient square-size 2))]
              [yc (+ (* (- 7 ysq) square-size) (quotient square-size 2))])
-        (if (and (hash-has-key? board-position (cons xsq ysq))
+        (if (and (send board-position has-piece-at? (cons xsq ysq))
                  (<= (abs (- x xc)) (quotient image-size 2))
                  (<= (abs (- y yc)) (quotient image-size 2)))
             (begin
-              (set! highlight-square (cons xsq ysq))
-              (send this refresh))
+              (set! selected-square (cons xsq ysq))
+              (set! drag-x (send event get-x))
+              (set! drag-y (send event get-y))
+              (refresh))
             '())))
 
     (define/private (handle-release event)
-      (set! highlight-square '())
-      (send this refresh))
+      (set! selected-square '())
+      (refresh))
 
     (define/private (handle-dragging event)
-      '())
+      (if (null? selected-square)
+          '()
+          (begin
+            (set! drag-x (send event get-x))
+            (set! drag-y (send event get-y))
+            (refresh))))
     
     (define/override (on-event event)
       (cond
@@ -113,18 +85,18 @@
       (define dc (get-dc))
       (define width (get-width))
       (define height (get-height))
-      (let ([sx (+ start-x (* i square-size))]
-            [sy (- height (+ start-y (* j square-size)) square-size)]
-            [color (cond [(and (not (null? highlight-square))
-                               (= i (car highlight-square))
-                               (= j (cdr highlight-square)))
-                          (make-color 255 255 0)]
-                         [(zero? (remainder (+ i j) 2)) (make-color 118 150 86)]
-                         [else (make-color 238 238 210)])])
+      (let* ([sx (+ start-x (* i square-size))]
+             [sy (- height (+ start-y (* j square-size)) square-size)]
+             [selected (and (not (null? selected-square))
+                            (= i (car selected-square))
+                            (= j (cdr selected-square)))]
+             [color (cond [selected (make-color 255 255 0)]
+                          [(zero? (remainder (+ i j) 2)) (make-color 118 150 86)]
+                          [else (make-color 238 238 210)])])
         (send dc set-brush color 'solid)
         (send dc set-pen "white" 1 'transparent)
         (send dc draw-rectangle sx sy square-size square-size)
-        (if (hash-has-key? board-position (cons i j))
+        (if (send board-position has-piece-at? (cons i j))
             (let* ([x (- (+ sx (quotient square-size 2))
                          (quotient image-size 2) 1)]
                    [y (- (+ sy (quotient square-size 2))
@@ -132,10 +104,13 @@
                    [img (read-bitmap
                          (piece-image-fn
                           image-size
-                          (hash-ref board-position (cons i j)))
+                          (send board-position get-piece-at (cons i j)))
                          'png/alpha)]
                    [scale-factor (/ square-size 50)])
-              (send dc draw-bitmap img x y))
+              (if selected
+                  (send dc draw-bitmap img (- drag-x (quotient image-size 2))
+                        (- drag-y (quotient image-size 2)))
+                  (send dc draw-bitmap img x y)))
             '())))
     
     ;; Draw the current board position.
@@ -159,7 +134,10 @@
         
         (for ([i 8])
           (for ([j 8])
-            (draw-piece i j)))))
+            (draw-piece i j)))
+        (if (not (null? selected-square))
+            (draw-piece (car selected-square) (cdr selected-square))
+            '())))
     
     (super-new)))
 
