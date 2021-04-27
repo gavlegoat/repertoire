@@ -91,7 +91,8 @@
                             (= i (car selected-square))
                             (= j (cdr selected-square)))]
              [color (cond [selected (make-color 255 255 0)]
-                          [(zero? (remainder (+ i j) 2)) (make-color 118 150 86)]
+                          [(zero? (remainder (+ i j) 2))
+                           (make-color 118 150 86)]
                           [else (make-color 238 238 210)])])
         (send dc set-brush color 'solid)
         (send dc set-pen "white" 1 'transparent)
@@ -135,8 +136,20 @@
         (for ([i 8])
           (for ([j 8])
             (draw-piece i j)))
+        (define (draw-dot sq)
+          (let ([x (+ st-x (* (car sq) sq-size) (quotient sq-size 2))]
+                [y (- height (+ st-y (* (cdr sq) sq-size)
+                                (quotient sq-size 2)))])
+            (send dc draw-ellipse (- x 5) (- y 5) 10 10)))
         (if (not (null? selected-square))
-            (draw-piece (car selected-square) (cdr selected-square))
+            (let ([moves (get-legal-moves board-position
+                                          (send board-position get-piece-at
+                                                selected-square)
+                                          selected-square)])
+              (send dc set-brush (make-color 0 255 0 0.5) 'solid)
+              (send dc set-pen "white" 1 'transparent)
+              (map draw-dot moves)
+              (draw-piece (car selected-square) (cdr selected-square)))
             '())))
     
     (super-new)))
