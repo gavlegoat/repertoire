@@ -25,18 +25,16 @@
 (define chess-board%
   (class canvas%
     (inherit get-dc get-width get-height refresh)
-    ; The starting position, given as a FEN string (default: starting position).
     (init [position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"])
-    ; The side who's turn it is, either 'white or 'black (default: 'white).
-    (init [to-move 'white])
     (init [castling '(((white . kingside) . #t) ((white . queenside) . #t)
                       ((black . kingside) . #t) ((black . queenside) . #t))])
     (init [en-passant '()])
+    (init [side-to-move 'white])
 
     (define board-position (new position% [position position]
-                                          [to-move to-move]
                                           [castling castling]
-                                          [en-passant en-passant]))
+                                          [en-passant en-passant]
+                                          [side-to-move side-to-move]))
     (define square-size 0)
     (define image-size 0)
     (define start-x 0)
@@ -44,27 +42,46 @@
     (define selected-square '())
     (define drag-x 0)
     (define drag-y 0)
+    (define legal-moves '())
 
-    (define/private (handle-click event)
+    (define/private (get-sq event)
       (let* ([x (- (send event get-x) start-x)]
              [y (- (send event get-y) start-y)]
              [xsq (quotient x square-size)]
-             [ysq (- 7 (quotient y square-size))]
-             [xc (+ (* xsq square-size) (quotient square-size 2))]
-             [yc (+ (* (- 7 ysq) square-size) (quotient square-size 2))])
-        (if (and (send board-position has-piece-at? (cons xsq ysq))
+             [ysq (- 7 (quotient y square-size))])
+        (cons xsq ysq)))
+    
+    (define/private (handle-click event)
+      (let* ([x (- (send event get-x) start-x)]
+             [y (- (send event get-y) start-y)]
+             [sq (get-sq event)]
+             [xc (+ (* (car sq) square-size) (quotient square-size 2))]
+             [yc (+ (* (- 7 (cdr sq)) square-size) (quotient square-size 2))])
+        (if (and (send board-position has-piece-at? sq)
                  (<= (abs (- x xc)) (quotient image-size 2))
-                 (<= (abs (- y yc)) (quotient image-size 2)))
+                 (<= (abs (- y yc)) (quotient image-size 2))
+                 (equal? (get-piece-color (send board-position get-piece-at sq))
+                         (send board-position get-to-move)))
             (begin
-              (set! selected-square (cons xsq ysq))
+              (set! selected-square sq)
               (set! drag-x (send event get-x))
               (set! drag-y (send event get-y))
+              (set! legal-moves (get-legal-moves
+                                 board-position
+                                 (send board-position get-piece-at
+                                       selected-square)
+                                 selected-square))
               (refresh))
             '())))
 
     (define/private (handle-release event)
-      (set! selected-square '())
-      (refresh))
+      (let* ([sq (get-sq event)])
+        (if (member sq legal-moves)
+            (send board-position make-move selected-square sq)
+            '())
+        (set! selected-square '())
+        (set! legal-moves '())
+        (refresh)))
 
     (define/private (handle-dragging event)
       (if (null? selected-square)
@@ -142,13 +159,10 @@
                                 (quotient sq-size 2)))])
             (send dc draw-ellipse (- x 5) (- y 5) 10 10)))
         (if (not (null? selected-square))
-            (let ([moves (get-legal-moves board-position
-                                          (send board-position get-piece-at
-                                                selected-square)
-                                          selected-square)])
+            (begin
               (send dc set-brush (make-color 0 255 0 0.5) 'solid)
               (send dc set-pen "white" 1 'transparent)
-              (map draw-dot moves)
+              (map draw-dot legal-moves)
               (draw-piece (car selected-square) (cdr selected-square)))
             '())))
     

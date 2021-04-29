@@ -4,7 +4,8 @@
 #lang racket
 
 (provide position%
-         get-legal-moves)
+         get-legal-moves
+         get-piece-color)
 
 ;; A position is represented by a map from squares to pieces, where a square
 ;; is a pair of integers and piece is one of the following symbols:
@@ -55,10 +56,10 @@
 (define position%
   (class object%
     (init [position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"])
-    (init [to-move 'white])
     (init [castling '(((white . kingside) . #t) ((white . queenside) . #t)
                       ((black . kingside) . #t) ((black . queenside) . #t))])
     (init [en-passant '()])
+    (init [side-to-move 'white])
 
     ;; The position of the pieces on the board, as a hashtable explained above.
     (define board-position (interpret-fen position))
@@ -67,6 +68,7 @@
     (define ep-sq en-passant)
     ;; An association list describing where castling is possible.
     (define castling-rights (make-immutable-hash castling))
+    (define to-move side-to-move)
 
     ;; The last state, used for unmaking moves.
     (define last-board-pos board-position)
@@ -85,6 +87,9 @@
     ;; Get the square where en passant can happen.
     (define/public (get-ep-sq) ep-sq)
 
+    ;; Get the side who's turn it is (either 'white or 'black).
+    (define/public (get-to-move) to-move)
+    
     ;; Determine whether the given color can castle queenside (including looking
     ;; checks).
     (define/public (queenside-castle? color)
@@ -213,6 +218,7 @@
       (set! last-board-pos board-position)
       (set! last-ep-sq ep-sq)
       (set! last-castling castling-rights)
+      (set! to-move (if (equal? to-move 'white) 'black 'white))
       (cond
         ; En passant
         [(equal? to-sq ep-sq)
@@ -297,6 +303,7 @@
     ;; between calls to make-move. That is, we are only responsible for saving
     ;; one previous position, not the whole history.
     (define/public (unmake-move)
+      (set! to-move (if (equal? to-move 'white) 'black 'white))
       (set! board-position last-board-pos)
       (set! ep-sq last-ep-sq)
       (set! castling-rights last-castling))
@@ -333,7 +340,7 @@
                                                       (cons i (cdr from-sq))))))
            (cons i (cdr from-sq)))]
         [left
-         (for/list ([i (in-range 0 (car from-sq))])
+         (for/list ([i (in-range (- (car from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons i (cdr from-sq)))
                         (same-color? color (send pos get-piece-at
                                                  (cons i (cdr from-sq)))))
@@ -351,7 +358,7 @@
                                                       (cons (car from-sq) i)))))
            (cons (car from-sq) i))]
         [down
-         (for/list ([i (in-range 0 (cdr from-sq))])
+         (for/list ([i (in-range (- (cdr from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons (car from-sq) i))
                         (same-color? color (send pos get-piece-at
                                                  (cons (car from-sq) i))))
@@ -547,3 +554,28 @@
 ;; Determine whether a given move is legal.
 (define (is-legal-move piece from-sq to-sq)
   (member to-sq (get-legal-moves piece from-sq)))
+
+;; Convert algebraic notation to pair notation.
+(define (algebraic->pair alg)
+  (if (equal? alg "-")
+      '()
+      (let ([lst (string->list alg)])
+        (cons (- (char->integer (car lst)) 97)
+              (- (char->integer (cadr lst)) 49)))))
+
+;; Convert a full FEN string to a position
+(define (fen->position fen)
+  (let* ([parts (string-split fen)]
+         [to-move (if (equal? (cadr parts) "w") 'white 'black)]
+         [castle
+          (list
+           (cons '(white . kingside) (string-contains? (caddr parts) "K"))
+           (cons '(white . queenside) (string-contains? (caddr parts) "Q"))
+           (cons '(black . kingside) (string-contains? (caddr parts) "k"))
+           (cons '(black . queenside) (string-contains? (caddr parts) "q")))]
+         [en-passant (algebraic->pair (cadddr parts))])
+    (new position%
+         [position (car parts)]
+         [en-passant en-passant]
+         [castling castle]
+         [side-to-move to-move])))
