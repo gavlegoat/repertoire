@@ -50,31 +50,8 @@
              [xsq (quotient x square-size)]
              [ysq (- 7 (quotient y square-size))])
         (cons xsq ysq)))
-    
-    (define/private (handle-click event)
-      (let* ([x (- (send event get-x) start-x)]
-             [y (- (send event get-y) start-y)]
-             [sq (get-sq event)]
-             [xc (+ (* (car sq) square-size) (quotient square-size 2))]
-             [yc (+ (* (- 7 (cdr sq)) square-size) (quotient square-size 2))])
-        (if (and (send board-position has-piece-at? sq)
-                 (<= (abs (- x xc)) (quotient image-size 2))
-                 (<= (abs (- y yc)) (quotient image-size 2))
-                 (equal? (get-piece-color (send board-position get-piece-at sq))
-                         (send board-position get-to-move)))
-            (begin
-              (set! selected-square sq)
-              (set! drag-x (send event get-x))
-              (set! drag-y (send event get-y))
-              (set! legal-moves (get-legal-moves
-                                 board-position
-                                 (send board-position get-piece-at
-                                       selected-square)
-                                 selected-square))
-              (refresh))
-            '())))
 
-    (define/private (handle-release event)
+    (define/private (place-piece event)
       (let* ([sq (get-sq event)])
         (if (member sq legal-moves)
             (send board-position make-move selected-square sq)
@@ -82,6 +59,46 @@
         (set! selected-square '())
         (set! legal-moves '())
         (refresh)))
+    
+    (define/private (handle-click event)
+      (if (null? selected-square)
+          (let* ([x (- (send event get-x) start-x)]
+                 [y (- (send event get-y) start-y)]
+                 [sq (get-sq event)]
+                 [xc (+ (* (car sq) square-size) (quotient square-size 2))]
+                 [yc (+ (* (- 7 (cdr sq)) square-size)
+                        (quotient square-size 2))])
+            (if (and (send board-position has-piece-at? sq)
+                     (<= (abs (- x xc)) (quotient image-size 2))
+                     (<= (abs (- y yc)) (quotient image-size 2))
+                     (equal? (get-piece-color (send board-position
+                                                    get-piece-at sq))
+                             (send board-position get-to-move)))
+                (begin
+                  (set! selected-square sq)
+                  (set! drag-x (send event get-x))
+                  (set! drag-y (send event get-y))
+                  (set! legal-moves (get-legal-moves
+                                     board-position
+                                     (send board-position get-piece-at
+                                           selected-square)
+                                     selected-square))
+                  (refresh))
+                '()))
+          (place-piece event)))
+
+    (define/private (handle-release event)
+      (let* ([sq (get-sq event)])
+        (if (equal? sq selected-square)
+            (let* ([x (- (send event get-x) start-x)]
+                 [y (- (send event get-y) start-y)]
+                 [xc (+ (* (car sq) square-size) (quotient square-size 2))]
+                 [yc (+ (* (- 7 (cdr sq)) square-size)
+                        (quotient square-size 2))])
+              (set! drag-x xc)
+              (set! drag-y yc)
+              (refresh))
+            (place-piece event))))
 
     (define/private (handle-dragging event)
       (if (null? selected-square)
