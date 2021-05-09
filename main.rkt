@@ -1,23 +1,24 @@
 #lang racket/gui
 
+(require "util.rkt")
 (require "chess.rkt")
 
 ;; Choose a filename based on the piece type and size.
 (define (piece-image-fn size piece)
   (let ([basename
-         (cond
-           [(equal? piece 'black-rook)   "Chess_rdt.png"]
-           [(equal? piece 'black-knight) "Chess_ndt.png"]
-           [(equal? piece 'black-bishop) "Chess_bdt.png"]
-           [(equal? piece 'black-queen)  "Chess_qdt.png"]
-           [(equal? piece 'black-king)   "Chess_kdt.png"]
-           [(equal? piece 'black-pawn)   "Chess_pdt.png"]
-           [(equal? piece 'white-rook)   "Chess_rlt.png"]
-           [(equal? piece 'white-knight) "Chess_nlt.png"]
-           [(equal? piece 'white-bishop) "Chess_blt.png"]
-           [(equal? piece 'white-queen)  "Chess_qlt.png"]
-           [(equal? piece 'white-king)   "Chess_klt.png"]
-           [(equal? piece 'white-pawn)   "Chess_plt.png"]
+         (switch piece
+           ['black-rook   "Chess_rdt.png"]
+           ['black-knight "Chess_ndt.png"]
+           ['black-bishop "Chess_bdt.png"]
+           ['black-queen  "Chess_qdt.png"]
+           ['black-king   "Chess_kdt.png"]
+           ['black-pawn   "Chess_pdt.png"]
+           ['white-rook   "Chess_rlt.png"]
+           ['white-knight "Chess_nlt.png"]
+           ['white-bishop "Chess_blt.png"]
+           ['white-queen  "Chess_qlt.png"]
+           ['white-king   "Chess_klt.png"]
+           ['white-pawn   "Chess_plt.png"]
            [else (raise "Unrecognized piece symbol")])])
     (string-append "img/" (number->string size) "px/" basename)))
 
@@ -91,10 +92,10 @@
       (let* ([sq (get-sq event)])
         (if (equal? sq selected-square)
             (let* ([x (- (send event get-x) start-x)]
-                 [y (- (send event get-y) start-y)]
-                 [xc (+ (* (car sq) square-size) (quotient square-size 2))]
-                 [yc (+ (* (- 7 (cdr sq)) square-size)
-                        (quotient square-size 2))])
+                   [y (- (send event get-y) start-y)]
+                   [xc (+ (* (car sq) square-size) (quotient square-size 2))]
+                   [yc (+ (* (- 7 (cdr sq)) square-size)
+                          (quotient square-size 2))])
               (set! drag-x xc)
               (set! drag-y yc)
               (refresh))

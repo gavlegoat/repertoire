@@ -7,6 +7,8 @@
          get-legal-moves
          get-piece-color)
 
+(require "util.rkt")
+
 ;; A position is represented by a map from squares to pieces, where a square
 ;; is a pair of integers and piece is one of the following symbols:
 ;; 'white-pawn   'black-pawn
@@ -29,19 +31,19 @@
   (define (fold-fun r char acc)
     (if (char-numeric? char)
         (cons (+ (car acc) (- (char->integer char) 48)) (cdr acc))
-        (let ([symb (cond
-                       [(equal? char #\r) 'black-rook]
-                       [(equal? char #\n) 'black-knight]
-                       [(equal? char #\b) 'black-bishop]
-                       [(equal? char #\q) 'black-queen]
-                       [(equal? char #\k) 'black-king]
-                       [(equal? char #\p) 'black-pawn]
-                       [(equal? char #\R) 'white-rook]
-                       [(equal? char #\N) 'white-knight]
-                       [(equal? char #\B) 'white-bishop]
-                       [(equal? char #\Q) 'white-queen]
-                       [(equal? char #\K) 'white-king]
-                       [(equal? char #\P) 'white-pawn]
+        (let ([symb (switch char
+                       [#\r 'black-rook]
+                       [#\n 'black-knight]
+                       [#\b 'black-bishop]
+                       [#\q 'black-queen]
+                       [#\k 'black-king]
+                       [#\p 'black-pawn]
+                       [#\R 'white-rook]
+                       [#\N 'white-knight]
+                       [#\B 'white-bishop]
+                       [#\Q 'white-queen]
+                       [#\K 'white-king]
+                       [#\P 'white-pawn]
                        [else (raise "Unrecognized piece")])])
           (cons (+ (car acc) 1)
                 (cons (cons (cons (car acc) r) symb) (cdr acc))))))
@@ -312,20 +314,21 @@
 
 ;; Determine whether the given piece has the given color.
 (define (same-color? color piece)
-  (cond [(equal? piece 'black-rook)   (equal? color 'black)]
-        [(equal? piece 'black-knight) (equal? color 'black)]
-        [(equal? piece 'black-bishop) (equal? color 'black)]
-        [(equal? piece 'black-queen)  (equal? color 'black)]
-        [(equal? piece 'black-king)   (equal? color 'black)]
-        [(equal? piece 'black-pawn)   (equal? color 'black)]
-        [(equal? piece 'white-rook)   (equal? color 'white)]
-        [(equal? piece 'white-knight) (equal? color 'white)]
-        [(equal? piece 'white-bishop) (equal? color 'white)]
-        [(equal? piece 'white-queen)  (equal? color 'white)]
-        [(equal? piece 'white-king)   (equal? color 'white)]
-        [(equal? piece 'white-pawn)   (equal? color 'white)]
-        [else (raise (string-append "Unknown piece symbol"
-                                    (symbol->string piece)))]))
+  (switch piece
+          ['black-rook   (equal? color 'black)]
+          ['black-knight (equal? color 'black)]
+          ['black-bishop (equal? color 'black)]
+          ['black-queen  (equal? color 'black)]
+          ['black-king   (equal? color 'black)]
+          ['black-pawn   (equal? color 'black)]
+          ['white-rook   (equal? color 'white)]
+          ['white-knight (equal? color 'white)]
+          ['white-bishop (equal? color 'white)]
+          ['white-queen  (equal? color 'white)]
+          ['white-king   (equal? color 'white)]
+          ['white-pawn   (equal? color 'white)]
+          [else (raise (string-append "Unknown piece symbol"
+                                      (symbol->string piece)))]))
 
 ;; Generate all pseudolegal rook moves starting from the given square in the
 ;; given position.
@@ -512,19 +515,20 @@
 
 ;; Determine which color the given piece is.
 (define (get-piece-color piece)
-  (cond [(equal? piece 'black-rook) 'black]
-        [(equal? piece 'black-knight) 'black]
-        [(equal? piece 'black-bishop) 'black]
-        [(equal? piece 'black-queen) 'black]
-        [(equal? piece 'black-king) 'black]
-        [(equal? piece 'black-pawn) 'black]
-        [(equal? piece 'white-rook) 'white]
-        [(equal? piece 'white-knight) 'white]
-        [(equal? piece 'white-bishop) 'white]
-        [(equal? piece 'white-queen) 'white]
-        [(equal? piece 'white-king) 'white]
-        [(equal? piece 'white-pawn) 'white]
-        [else (raise "Unkonwn piece symbol")]))
+  (switch piece
+          ['black-rook   'black]
+          ['black-knight 'black]
+          ['black-bishop 'black]
+          ['black-queen  'black]
+          ['black-king   'black]
+          ['black-pawn   'black]
+          ['white-rook   'white]
+          ['white-knight 'white]
+          ['white-bishop 'white]
+          ['white-queen  'white]
+          ['white-king   'white]
+          ['white-pawn   'white]
+          [else (raise "Unkonwn piece symbol")]))
 
 ;; Get a list of all legal moves from the given position and piece.
 (define (get-legal-moves pos piece from-sq)
@@ -535,19 +539,20 @@
       (send pos unmake-move)
       (not res)))
   (let ([pseudo
-         (cond [(equal? piece 'black-rook)   (rook-moves pos 'black from-sq)]
-               [(equal? piece 'black-knight) (knight-moves pos 'black from-sq)]
-               [(equal? piece 'black-bishop) (bishop-moves pos 'black from-sq)]
-               [(equal? piece 'black-queen)  (queen-moves pos 'black from-sq)]
-               [(equal? piece 'black-king)   (king-moves pos 'black from-sq)]
-               [(equal? piece 'black-pawn)   (pawn-moves pos 'black from-sq)]
-               [(equal? piece 'white-rook)   (rook-moves pos 'white from-sq)]
-               [(equal? piece 'white-knight) (knight-moves pos 'white from-sq)]
-               [(equal? piece 'white-bishop) (bishop-moves pos 'white from-sq)]
-               [(equal? piece 'white-queen)  (queen-moves pos 'white from-sq)]
-               [(equal? piece 'white-king)   (king-moves pos 'white from-sq)]
-               [(equal? piece 'white-pawn)   (pawn-moves pos 'white from-sq)]
-               [else (string-append (raise "Unknown piece symbol")
+         (switch piece
+                 ['black-rook   (rook-moves pos 'black from-sq)]
+                 ['black-knight (knight-moves pos 'black from-sq)]
+                 ['black-bishop (bishop-moves pos 'black from-sq)]
+                 ['black-queen  (queen-moves pos 'black from-sq)]
+                 ['black-king   (king-moves pos 'black from-sq)]
+                 ['black-pawn   (pawn-moves pos 'black from-sq)]
+                 ['white-rook   (rook-moves pos 'white from-sq)]
+                 ['white-knight (knight-moves pos 'white from-sq)]
+                 ['white-bishop (bishop-moves pos 'white from-sq)]
+                 ['white-queen  (queen-moves pos 'white from-sq)]
+                 ['white-king   (king-moves pos 'white from-sq)]
+                 ['white-pawn   (pawn-moves pos 'white from-sq)]
+                 [else (string-append (raise "Unknown piece symbol")
                                     (symbol->string piece))])])
     (filter look-for-check pseudo)))
 
