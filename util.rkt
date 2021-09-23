@@ -8,6 +8,13 @@
 
 ;(define otherwise '())
 
+;; Switch effectively works like a restricted cond statement:
+;; (switch a [b1 c1] [b2 c2] ... [bn cn]) is equivalent to
+;; (cond [(equal? a b1) c1]
+;;       [(equal? a b2) c2]
+;;       ...
+;;       [(equal? a bn) cn])
+;; Note that switch can also take an else clause.
 (define-syntax-rule (switch v clauses ...)
   (let ([tmp v])
     (switch/clauses tmp clauses ...)))

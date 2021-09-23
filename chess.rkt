@@ -5,9 +5,25 @@
 
 (provide position%
          get-legal-moves
-         get-piece-color)
+         get-piece-color
+         algebraic->pair
+         pair->algebraic)
 
 (require "util.rkt")
+
+;; Convert algebraic notation to pair notation.
+(define (algebraic->pair alg)
+  (if (equal? alg "-")
+      '()
+      (let ([lst (string->list alg)])
+        (cons (- (char->integer (car lst)) 97)
+              (- (char->integer (cadr lst)) 49)))))
+
+;; Convert a square in pair notation to algebraic notation.
+(define (pair->algebraic pair)
+  (let ([file (integer->char (+ (car pair) 97))]
+        [rank (integer->char (+ (cdr pair) 49))])
+    (string file rank)))
 
 ;; A position is represented by a map from squares to pieces, where a square
 ;; is a pair of integers and piece is one of the following symbols:
@@ -309,7 +325,59 @@
       (set! board-position last-board-pos)
       (set! ep-sq last-ep-sq)
       (set! castling-rights last-castling))
-    
+
+    (define/public (get-fen)
+      (define (label-square i j)
+          (if (hash-has-key? board-position (cons i j))
+              (switch (hash-ref board-position (cons i j))
+                      ['black-rook   #\r]
+                      ['black-knight #\n]
+                      ['black-bishop #\b]
+                      ['black-queen  #\q]
+                      ['black-king   #\k]
+                      ['black-pawn   #\p]
+                      ['white-rook   #\R]
+                      ['white-knight #\N]
+                      ['white-bishop #\B]
+                      ['white-queen  #\Q]
+                      ['white-king   #\K]
+                      ['white-pawn   #\P])
+              #\1))
+      (define (compress lst len)
+        (if (null? lst)
+            '()
+            (if (equal? (car lst) #\1)
+                (compress (cdr lst) (+ len 1))
+                (if (> len 0)
+                    (cons (integer->char (+ len 48)) (compress lst 0))
+                    (cons (car lst) (compress (cdr lst) 0))))))
+      ; First get an expanded string where consecutive empty spaces are not
+      ; compressed
+      (let ([expanded (string-join (map (lambda (i)
+                                          (list->string
+                                           (map (lambda (j)
+                                                  (label-square j (- 7 i)))
+                                                (range 8))))
+                                        (range 8))
+                                   "/")])
+        ; Now compress consecutive 1's
+        (let ([fen-pos (list->string (compress (string->list expanded) 0))]
+              [to-play (if (equal? to-move 'white) "w" "b")]
+              [castling
+               (string-append
+                (if (hash-ref castling-rights '(white . kingside)) "K" "")
+                (if (hash-ref castling-rights '(white . queenside)) "Q" "")
+                (if (hash-ref castling-rights '(black . kingside)) "k" "")
+                (if (hash-ref castling-rights '(black . queenside)) "q" ""))]
+              [ep-square (if (null? ep-sq) "-" (pair->algebraic ep-sq))])
+          (string-join
+           (list fen-pos
+                 to-play
+                 (if (non-empty-string? castling)
+                     castling
+                     "-")
+                 ep-square) " "))))
+
     (super-new)))
 
 ;; Determine whether the given piece has the given color.
@@ -559,14 +627,6 @@
 ;; Determine whether a given move is legal.
 (define (is-legal-move piece from-sq to-sq)
   (member to-sq (get-legal-moves piece from-sq)))
-
-;; Convert algebraic notation to pair notation.
-(define (algebraic->pair alg)
-  (if (equal? alg "-")
-      '()
-      (let ([lst (string->list alg)])
-        (cons (- (char->integer (car lst)) 97)
-              (- (char->integer (cadr lst)) 49)))))
 
 ;; Convert a full FEN string to a position
 (define (fen->position fen)
