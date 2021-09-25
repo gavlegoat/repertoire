@@ -7,7 +7,8 @@
 (require "repertoire.rkt")
 
 ;; Choose a filename based on the piece type and size.
-(define (piece-image-fn size piece)
+(define/contract (piece-image-fn size piece)
+  (-> integer? piece? string?)
   (let ([basename
          (switch piece
            ['black-rook   "Chess_rdt.png"]
@@ -103,8 +104,8 @@
             (if (and (send board-position has-piece-at? sq)
                      (<= (abs (- x xc)) (quotient image-size 2))
                      (<= (abs (- y yc)) (quotient image-size 2))
-                     (equal? (get-piece-color (send board-position
-                                                    get-piece-at sq))
+                     (equal? (get-color (send board-position
+                                              get-piece-at sq))
                              (send board-position get-to-move)))
                 (begin
                   ; Highlight that square and prepare dragging variables.
@@ -158,7 +159,7 @@
         [(send event button-down? 'left) (handle-click event)]
         [(send event button-up? 'left) (handle-release event)]
         [(send event dragging?) (handle-dragging event)]
-        [else '()]))
+        [else (void '())]))
 
     ; Draw the appropriate piece at the given square.
     (define/private (draw-piece i j)
@@ -249,6 +250,13 @@
     
     (super-new)))
 
+(define/contract chess-board+c%
+  (class/c
+   [get-position-fen (->m string?)]
+   [set-position (->m string? void?)]
+   [get-move-algebraic (->m (cons/c integer? integer?) string?)])
+  chess-board%)
+
 ;; The navigation panel allows the user to change the position on the board in
 ;; ways other than by moving the pieces (for example, returning to a previous
 ;; position).
@@ -317,6 +325,11 @@
     ; TODO: Add next moves panel
     
     (super-new)))
+
+(define/contract navigation-panel+c%
+  (class/c
+   [populate-history-panel (->m (listof string?) void?)])
+  navigation-panel%)
 
 ;; The controller class coordinates all of the GUI elements and the repertoire.
 (define controller%
@@ -405,6 +418,22 @@
       (helper history move-history))
     
     (super-new)))
+
+(define/contract controller+c%
+  (class/c
+   [set-panel (->m (is-a?/c panel%) void?)]
+   [set-editor (->m (is-a?/c text%) void?)]
+   [set-navigator (->m (is-a?/c navigation-panel%) void?)]
+   [set-repertoire (->m (is-a?/c repertoire%) void?)]
+   [get-move-history (->m (listof string?))]
+   [update-annotation (->m void?)]
+   [make-move (->m (cons/c (cons/c integer? integer?)
+                           (cons/c integer? integer?)) void?)]
+   [set-previous-position (->m void?)]
+   [set-position (->m string? void?)]
+   [set-start-position (->m void?)]
+   [return-to (->m string? void?)])
+  controller%)
 
 ;;; Main code
 

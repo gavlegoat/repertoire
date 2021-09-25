@@ -11,14 +11,16 @@
 ;; Convert a move (in pair representation) to a string representing the
 ;; start and end squares, for example ((4 . 1) . (4 . 3)) is converted to
 ;; "e2-e4".
-(define (move->jsexpr move)
+(define/contract (move->jsexpr move)
+  (-> (cons/c (cons/c integer? integer?) (cons/c integer? integer?)) jsexpr?)
   (let ([from-sq (car move)]
         [to-sq (cdr move)])
     (string-append (pair->algebraic from-sq) "-" (pair->algebraic to-sq))))
 
 ;; Convert a move in string format to a move in pair format. For example
 ;; "e2-e4" becomes ((4 . 1) . (4 . 3))
-(define (jsexpr->move js)
+(define/contract (jsexpr->move js)
+  (-> jsexpr? (cons/c (cons/c integer? integer?) (cons/c integer? integer?)))
   (let ([from-sq (substring js 0 2)]
         [to-sq (substring js 3)])
     (cons (algebraic->pair from-sq) (algebraic->pair to-sq))))

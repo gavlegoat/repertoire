@@ -4,12 +4,37 @@
 #lang racket
 
 (provide position%
-         get-legal-moves
-         get-piece-color
-         algebraic->pair
-         pair->algebraic)
+         piece?
+         color?
+         (contract-out
+          [get-legal-moves
+           (-> (is-a?/c position%) symbol? (cons/c integer? integer?)
+               (listof (cons/c integer? integer?)))]
+          [get-color
+           (-> piece? color?)]
+          [algebraic->pair
+           (-> string? (cons/c integer? integer?))]
+          [pair->algebraic
+           (-> (cons/c integer? integer?) string?)]))
 
 (require "util.rkt")
+
+(define piece?
+  (or/c 'white-rook
+        'white-knight
+        'white-bishop
+        'white-queen
+        'white-king
+        'white-pawn
+        'black-rook
+        'black-knight
+        'black-bishop
+        'black-queen
+        'black-king
+        'black-pawn))
+
+(define color?
+  (or/c 'white 'black))
 
 ;; Convert algebraic notation to pair notation.
 (define (algebraic->pair alg)
@@ -530,8 +555,26 @@
 
     (super-new)))
 
+;; A contract defining the interface of position%
+(define/contract position+c%
+  (class/c
+   [has-piece-at? (->m (cons/c integer? integer?) boolean?)]
+   [get-piece-at (->m (cons/c integer? integer?) piece?)]
+   [get-ep-sq (->m (or/c (cons/c integer? integer?) null?))]
+   [get-to-move (->m color?)]
+   [get-algebraic (->m (cons/c (cons/c integer? integer?)
+                               (cons/c integer? integer?)) string?)]
+   [queenside-castle? (->m color? boolean?)]
+   [kingside-castle? (->m color? boolean?)]
+   [find-piece (->m piece? (listof (cons/c integer? integer?)))]
+   [piece-at? (->m piece? (cons/c integer? integer?) boolean?)]
+   [unmake-move (->m void?)]
+   [get-fen (->m string?)])
+  position%)
+
 ;; Determine whether the given piece has the given color.
-(define (same-color? color piece)
+(define/contract (same-color? color piece)
+  (-> color? piece? boolean?)
   (switch piece
           ['black-rook   (equal? color 'black)]
           ['black-knight (equal? color 'black)]
@@ -550,7 +593,10 @@
 
 ;; Generate all pseudolegal rook moves starting from the given square in the
 ;; given position.
-(define (rook-moves pos color from-sq #:allow-self-capture [self #f])
+(define/contract (rook-moves pos color from-sq #:allow-self-capture [self #f])
+  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+       (#:allow-self-capture boolean?)
+       (listof (cons/c integer? integer?)))
   (let ([right
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons i (cdr from-sq)))
@@ -602,7 +648,10 @@
     (append left right up down)))
 
 ;; Generate pseudolegal knight moves.
-(define (knight-moves pos color from-sq #:allow-self-capture [self #f])
+(define/contract (knight-moves pos color from-sq #:allow-self-capture [self #f])
+  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+       (#:allow-self-capture boolean?)
+       (listof (cons/c integer? integer?)))
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
@@ -617,7 +666,10 @@
                         (-1 . 2) (1 . 2) (2 . 1) (2 . -1))))
 
 ;; Generate pseudolegal bishop moves.
-(define (bishop-moves pos color from-sq #:allow-self-capture [self #f])
+(define/contract (bishop-moves pos color from-sq #:allow-self-capture [self #f])
+  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+       (#:allow-self-capture boolean?)
+       (listof (cons/c integer? integer?)))
   (let ([upright
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)]
                     [j (in-range (+ 1 (cdr from-sq)) 8)])
@@ -669,12 +721,18 @@
     (append upright upleft downright downleft)))
 
 ;; Generate pseudolegal queen moves.
-(define (queen-moves pos color from-sq #:allow-self-capture [self #f])
+(define/contract (queen-moves pos color from-sq #:allow-self-capture [self #f])
+  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+       (#:allow-self-capture boolean?)
+       (listof (cons/c integer? integer?)))
   (append (rook-moves pos color from-sq #:allow-self-capture self)
           (bishop-moves pos color from-sq #:allow-self-capture self)))
 
 ;; Generate pseudolegal king moves.
-(define (king-moves pos color from-sq #:allow-self-capture [self #f])
+(define/contract (king-moves pos color from-sq #:allow-self-capture [self #f])
+  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+       (#:allow-self-capture boolean?)
+       (listof (cons/c integer? integer?)))
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
@@ -698,7 +756,9 @@
                                   (0 . 1) (1 . -1) (1 . 0) (1 . 1))))))
 
 ;; Generate pseudolegal pawn moves.
-(define (pawn-moves pos color from-sq)
+(define/contract (pawn-moves pos color from-sq)
+  (-> (is-a?/c position%) color? (cons/c integer? integer?)
+      (listof (cons/c integer? integer?)))
   (let ([forward
          (if (equal? color 'white)
              (if (send pos has-piece-at?
@@ -750,7 +810,8 @@
     (append forward capture en-passant)))
 
 ;; Get a list of all the locations at which a given piece appears.
-(define (find-piece pos piece)
+(define/contract (find-piece pos piece)
+  (-> (is-a?/c position%) piece? (listof (cons/c integer? integer?)))
   (append
    (for*/list ([i (in-range 8)]
                [j (in-range 8)]
@@ -758,28 +819,11 @@
                            (equal? (send pos get-piece-at (cons i j)) piece)))
      (cons i j))))
 
-;; Determine which color the given piece is.
-(define (get-piece-color piece)
-  (switch piece
-          ['black-rook   'black]
-          ['black-knight 'black]
-          ['black-bishop 'black]
-          ['black-queen  'black]
-          ['black-king   'black]
-          ['black-pawn   'black]
-          ['white-rook   'white]
-          ['white-knight 'white]
-          ['white-bishop 'white]
-          ['white-queen  'white]
-          ['white-king   'white]
-          ['white-pawn   'white]
-          [else (raise "Unkonwn piece symbol")]))
-
 ;; Get a list of all legal moves from the given position and piece.
 (define (get-legal-moves pos piece from-sq)
   (define (look-for-check move)
     (send pos make-move from-sq move)
-    (let* ([color (get-piece-color piece)]
+    (let* ([color (get-color piece)]
            [res (send pos in-check color)])
       (send pos unmake-move)
       (not res)))
@@ -802,11 +846,13 @@
     (filter look-for-check pseudo)))
 
 ;; Determine whether a given move is legal.
-(define (is-legal-move piece from-sq to-sq)
+(define/contract (is-legal-move piece from-sq to-sq)
+  (-> piece? (cons/c integer? integer?) (cons/c integer? integer?) boolean?)
   (member to-sq (get-legal-moves piece from-sq)))
 
 ;; Convert a full FEN string to a position
-(define (fen->position fen)
+(define/contract (fen->position fen)
+  (-> string? (is-a?/c position%))
   (let* ([parts (string-split fen)]
          [to-move (if (equal? (cadr parts) "w") 'white 'black)]
          [castle
