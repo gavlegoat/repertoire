@@ -25,6 +25,21 @@
         [rank (integer->char (+ (cdr pair) 49))])
     (string file rank)))
 
+(define (get-color piece)
+  (switch piece
+          ['white-rook 'white]
+          ['white-knight 'white]
+          ['white-bishop 'white]
+          ['white-queen 'white]
+          ['white-king 'white]
+          ['white-pawn 'white]
+          ['black-rook 'black]
+          ['black-knight 'black]
+          ['black-bishop 'black]
+          ['black-queen 'black]
+          ['black-king 'black]
+          ['black-pawn 'black]))
+
 ;; A position is represented by a map from squares to pieces, where a square
 ;; is a pair of integers and piece is one of the following symbols:
 ;; 'white-pawn   'black-pawn
@@ -73,21 +88,36 @@
 ;; A position on a chessboard.
 (define position%
   (class object%
-    (init [position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"])
-    (init [castling '(((white . kingside) . #t) ((white . queenside) . #t)
-                      ((black . kingside) . #t) ((black . queenside) . #t))])
-    (init [en-passant '()])
-    (init [side-to-move 'white])
-
+    (init [fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"])
     ;; The position of the pieces on the board, as a hashtable explained above.
-    (define board-position (interpret-fen position))
+    (init-field [board-position #f])
+    ;; Whose turn it is.
+    (init-field [to-move #f])
     ;; The square where an en passant capture can end (i.e., the 6th or 3rd
     ;; rank). If en passant is not possible, this is '().
-    (define ep-sq en-passant)
+    (init-field [ep-sq #f])
     ;; An association list describing where castling is possible.
-    (define castling-rights (make-immutable-hash castling))
-    (define to-move side-to-move)
+    (init-field [castling-rights #f])
 
+    ;; We only use the fen string if no other initialization fields are
+    ;; provided.
+    (if (or board-position to-move ep-sq castling-rights)
+        '()
+        (let ([parts (string-split fen)])
+          (let ([pos (car parts)]
+                [side (cadr parts)]
+                [castle (caddr parts)]
+                [ep (cadddr parts)])
+            (set! board-position (interpret-fen pos))
+            (set! to-move (if (equal? side "w") 'white 'black))
+            (set! ep-sq (if (equal? ep "-") '() (algebraic->pair ep)))
+            (set! castling-rights
+                  (make-immutable-hash
+                   (list (cons '(white . kingside) (string-contains? castle "K"))
+                         (cons '(white . queenside) (string-contains? castle "Q"))
+                         (cons '(black . kingside) (string-contains? castle "k"))
+                         (cons '(black . queenside) (string-contains? castle "q"))))))))
+        
     ;; The last state, used for unmaking moves.
     (define last-board-pos board-position)
     (define last-ep-sq ep-sq)
@@ -107,6 +137,126 @@
 
     ;; Get the side who's turn it is (either 'white or 'black).
     (define/public (get-to-move) to-move)
+
+    ;; Get the algebraic notation for the given move assuming it maps the
+    ;; previous position to the current position.
+    (define/public (get-algebraic move)
+      (let* ([piece (hash-ref last-board-pos (car move))]
+             [piece-code (switch piece
+                                 ['white-rook "R"]
+                                 ['black-rook "R"]
+                                 ['white-knight "N"]
+                                 ['black-knight "N"]
+                                 ['white-bishop "B"]
+                                 ['black-bishop "B"]
+                                 ['white-queen "Q"]
+                                 ['black-queen "Q"]
+                                 ['white-king "K"]
+                                 ['black-king "K"]
+                                 [else ""])]
+             [end-sq (pair->algebraic (cdr move))])
+        (cond
+          [(and (equal? piece-code "K") (= (- (cadr move) (caar move)) 2))
+           ; Castle kingside
+           "O-O"]
+          [(and (equal? piece-code "K") (= (- (caar move) (cadr move)) 3))
+           ; Castle queenside
+           "O-O-O"]
+          [(and (equal? piece-code "")
+                (equal? (cdr move) last-ep-sq))
+           ; En passant
+           (let ([start-file (integer->char (+ (caar move) 97))])
+             (string-append (list->string (list start-file))
+                            "x"
+                            (pair->algebraic (cdr move))))]
+          [(equal? piece-code "")
+           ; Pawn move -- There can be no ambiguity in pawn moves.
+           (if (hash-has-key? last-board-pos (cdr move))
+               (string-append
+                (list->string (list (integer->char (+ (caar move) 97))))
+                "x"
+                (pair->algebraic (cdr move)))
+               (pair->algebraic (cdr move)))]
+          [else
+           ; This is the regular case.
+           ; Get a list of the locatinos of other pieces of the same kind that
+           ; can attack the target square.
+           (let ([other-pieces
+                  (let* ([last-pos (new position%
+                                        [board-position last-board-pos]
+                                        [to-move 'white]
+                                        [ep-sq last-ep-sq]
+                                        [castling-rights last-castling])]
+                         [sqs (switch piece-code
+                                     ["R" (rook-moves last-pos
+                                                      (get-color piece)
+                                                      (cdr move)
+                                                      #:allow-self-capture #t)]
+                                     ["N" (knight-moves last-pos
+                                                        (get-color piece)
+                                                        (cdr move)
+                                                        #:allow-self-capture #t)]
+                                     ["B" (bishop-moves last-pos
+                                                        (get-color piece)
+                                                        (cdr move)
+                                                        #:allow-self-capture #t)]
+                                     ["Q" (queen-moves last-pos
+                                                       (get-color piece)
+                                                       (cdr move)
+                                                       #:allow-self-capture #t)]
+                                     ["K" (king-moves last-pos
+                                                      (get-color piece)
+                                                      (cdr move)
+                                                      #:allow-self-capture #t)])])
+                    (filter
+                     (lambda (sq) (if (hash-has-key? last-board-pos sq)
+                                      (and (equal? (hash-ref last-board-pos sq)
+                                                   piece)
+                                           (not (equal? sq (car move))))
+                                      #f))
+                     sqs))]
+                 [capture-string
+                  (if (hash-has-key? last-board-pos (cdr move)) "x" "")])
+             (if (null? other-pieces)
+                 ; There is no ambiguity
+                 (string-append piece-code
+                                capture-string
+                                (pair->algebraic (cdr move)))
+                 (if (ormap (lambda (p) (equal? (car p) (caar move)))
+                            other-pieces)
+                     ; File is not enough to distinguish
+                     (if (ormap (lambda (p) (equal? (cdr p) (cdar move)))
+                                other-pieces)
+                         ; Rank is not enough to distinguish
+                         (string-append piece-code
+                                        (pair->algebraic (car move))
+                                        capture-string
+                                        (pair->algebraic (cdr move)))
+                         ; Rank is enough to distinguish
+                         (string-append
+                          piece-code
+                          (substring (pair->algebraic (car move)) 1 2)
+                          capture-string
+                          (pair->algebraic (cdr move))))
+                     ; File is enough to distinguish
+                     (string-append piece-code
+                                    (substring (pair->algebraic (car move)) 0 1)
+                                    capture-string
+                                    (pair->algebraic (cdr move))))))])))
+
+    ; NOTE: it is possible (though rare) for situations to come up where both
+    ; file and the rank are needed to distinguish different moves. For example,
+    ; in the position below Qdd4 is ambiguous between the queens on d2 and d6
+    ; while Q2d4 is ambiguous between d2 and f2. Therefore we would need to
+    ; return Qd2d4.
+    ; - - - - - - - -
+    ; - - - - - - - -
+    ; - - - Q - - - -
+    ; - - - - - - - -
+    ; - - - x - - - -
+    ; - - - - - - - -
+    ; - - - Q - Q - -
+    ; - - - - - - - -
     
     ;; Determine whether the given color can castle queenside (including looking
     ;; checks).
@@ -400,112 +550,139 @@
 
 ;; Generate all pseudolegal rook moves starting from the given square in the
 ;; given position.
-(define (rook-moves pos color from-sq)
+(define (rook-moves pos color from-sq #:allow-self-capture [self #f])
   (let ([right
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons i (cdr from-sq)))
                         (same-color? color (send pos get-piece-at
-                                                 (cons i (cdr from-sq)))))
+                                                 (cons i (cdr from-sq))))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i (cdr from-sq)))
-                        (not (same-color? color (send pos get-piece-at
-                                                      (cons i (cdr from-sq))))))
+                        (or
+                         (not (same-color? color (send pos get-piece-at
+                                                       (cons i (cdr from-sq)))))
+                         self))
            (cons i (cdr from-sq)))]
         [left
          (for/list ([i (in-range (- (car from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons i (cdr from-sq)))
                         (same-color? color (send pos get-piece-at
-                                                 (cons i (cdr from-sq)))))
+                                                 (cons i (cdr from-sq))))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i (cdr from-sq)))
-                        (not (same-color? color (send pos get-piece-at
-                                                      (cons i (cdr from-sq))))))
+                        (or
+                         (not (same-color? color (send pos get-piece-at
+                                                       (cons i (cdr from-sq)))))
+                         self))
            (cons i (cdr from-sq)))]
         [up
          (for/list ([i (in-range (+ 1 (cdr from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons (car from-sq) i))
                         (same-color? color (send pos get-piece-at
-                                                 (cons (car from-sq) i))))
+                                                 (cons (car from-sq) i)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons (car from-sq) i))
-                        (not (same-color? color (send pos get-piece-at
-                                                      (cons (car from-sq) i)))))
+                        (or
+                         (not (same-color? color (send pos get-piece-at
+                                                       (cons (car from-sq) i))))
+                         self))
            (cons (car from-sq) i))]
         [down
          (for/list ([i (in-range (- (cdr from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons (car from-sq) i))
                         (same-color? color (send pos get-piece-at
-                                                 (cons (car from-sq) i))))
+                                                 (cons (car from-sq) i)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons (car from-sq) i))
-                        (not (same-color? color (send pos get-piece-at
-                                                      (cons (car from-sq) i)))))
+                        (or
+                         (not (same-color? color (send pos get-piece-at
+                                                       (cons (car from-sq) i))))
+                         self))
            (cons (car from-sq) i))])
     (append left right up down)))
 
 ;; Generate pseudolegal knight moves.
-(define (knight-moves pos color from-sq)
+(define (knight-moves pos color from-sq #:allow-self-capture [self #f])
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
       (if (or (< (car dest) 0) (< (cdr dest) 0)
               (> (car dest) 7) (> (cdr dest) 7)
               (and (send pos has-piece-at? dest)
-                   (same-color? color (send pos get-piece-at dest))))
+                   (same-color? color (send pos get-piece-at dest))
+                   (not self)))
           '()
           (list dest))))
   (append-map map-fun '((1 . -2) (-1 . -2) (-2 . -1) (-2 . 1)
                         (-1 . 2) (1 . 2) (2 . 1) (2 . -1))))
 
 ;; Generate pseudolegal bishop moves.
-(define (bishop-moves pos color from-sq)
+(define (bishop-moves pos color from-sq #:allow-self-capture [self #f])
   (let ([upright
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)]
                     [j (in-range (+ 1 (cdr from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons i j))
-                        (same-color? color (send pos get-piece-at (cons i j))))
+                        (same-color? color (send pos get-piece-at (cons i j)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i j))
-                        (not (same-color? color
-                                          (send pos get-piece-at (cons i j)))))
+                        (or
+                         (not (same-color? color
+                                           (send pos get-piece-at (cons i j))))
+                         self))
            (cons i j))]
         [upleft
          (for/list ([i (in-range (- (car from-sq) 1) -1 -1)]
                     [j (in-range (+ 1 (cdr from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons i j))
-                        (same-color? color (send pos get-piece-at (cons i j))))
+                        (same-color? color (send pos get-piece-at (cons i j)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i j))
-                        (not (same-color? color
-                                          (send pos get-piece-at (cons i j)))))
+                        (or
+                         (not (same-color? color
+                                           (send pos get-piece-at (cons i j))))
+                         self))
            (cons i j))]
         [downright
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)]
                     [j (in-range (- (cdr from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons i j))
-                        (same-color? color (send pos get-piece-at (cons i j))))
+                        (same-color? color (send pos get-piece-at (cons i j)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i j))
-                        (not (same-color? color
-                                          (send pos get-piece-at (cons i j)))))
+                        (or
+                         (not (same-color? color
+                                           (send pos get-piece-at (cons i j))))
+                         self))
            (cons i j))]
         [downleft
          (for/list ([i (in-range (- (car from-sq) 1) -1 -1)]
                     [j (in-range (- (cdr from-sq) 1) -1 -1)])
            #:break (and (send pos has-piece-at? (cons i j))
-                        (same-color? color (send pos get-piece-at (cons i j))))
+                        (same-color? color (send pos get-piece-at (cons i j)))
+                        (not self))
            #:final (and (send pos has-piece-at? (cons i j))
-                        (not (same-color? color
-                                          (send pos get-piece-at (cons i j)))))
-           (cons i j))])
+                        (or
+                         (not (same-color? color
+                                           (send pos get-piece-at (cons i j))))
+                         self))
+                        (cons i j))])
     (append upright upleft downright downleft)))
 
 ;; Generate pseudolegal queen moves.
-(define (queen-moves pos color from-sq)
-  (append (rook-moves pos color from-sq) (bishop-moves pos color from-sq)))
+(define (queen-moves pos color from-sq #:allow-self-capture [self #f])
+  (append (rook-moves pos color from-sq #:allow-self-capture self)
+          (bishop-moves pos color from-sq #:allow-self-capture self)))
 
 ;; Generate pseudolegal king moves.
-(define (king-moves pos color from-sq)
+(define (king-moves pos color from-sq #:allow-self-capture [self #f])
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
       (if (or (< (car dest) 0) (< (cdr dest) 0)
               (> (car dest) 7) (> (cdr dest) 7)
               (and (send pos has-piece-at? dest)
-                   (same-color? color (send pos get-piece-at dest))))
+                   (same-color? color (send pos get-piece-at dest))
+                   (not self)))
           '()
           (list dest))))
   (let ([queenside-castle

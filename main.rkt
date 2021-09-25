@@ -29,17 +29,10 @@
 (define chess-board%
   (class canvas%
     (inherit get-dc get-width get-height refresh)
-    (init [position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"])
-    (init [castling '(((white . kingside) . #t) ((white . queenside) . #t)
-                      ((black . kingside) . #t) ((black . queenside) . #t))])
-    (init [en-passant '()])
-    (init [side-to-move 'white])
+    (init [fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"])
 
     ; The current position on the board
-    (define board-position (new position% [position position]
-                                          [castling castling]
-                                          [en-passant en-passant]
-                                          [side-to-move side-to-move]))
+    (define board-position (new position% [fen fen]))
     ; The size of one square of the chess board.
     (define square-size 0)
     ; The size of the images of the pieces.
@@ -64,6 +57,15 @@
 
     (define/public (get-position-fen)
       (send board-position get-fen))
+
+    (define/public (set-position fen)
+      (set! selected-square '())
+      (set! legal-moves '())
+      (set! board-position (new position% [fen fen]))
+      (refresh))
+
+    (define/public (get-move-algebraic move)
+      (send board-position get-algebraic move))
     
     ; Given a mouse event, determine which square of the board
     ; the mouse is in.
@@ -128,10 +130,9 @@
         ; If the mouse is released in the same square where it was clicked
         (if (equal? sq selected-square)
             ; Simply reset the dragging variables.
-            (let* ([x (- (send event get-x) start-x)]
-                   [y (- (send event get-y) start-y)]
-                   [xc (+ (* (car sq) square-size) (quotient square-size 2))]
-                   [yc (+ (* (- 7 (cdr sq)) square-size)
+            (let* ([xc (+ start-x (* (car sq) square-size)
+                          (quotient square-size 2))]
+                   [yc (+ start-y (* (- 7 (cdr sq)) square-size)
                           (quotient square-size 2))])
               (set! drag-x xc)
               (set! drag-y yc)
@@ -248,6 +249,75 @@
     
     (super-new)))
 
+;; The navigation panel allows the user to change the position on the board in
+;; ways other than by moving the pieces (for example, returning to a previous
+;; position).
+;; The panel layout is:
+;; +-------------------------+
+;; |     Start    Back       |
+;; |   History    Next moves |
+;; +-------------------------+
+(define navigation-panel%
+  (class object%
+    (init controller)
+    (init parent)
+
+    (define panel (new vertical-panel% [parent parent]))
+    (define button-panel (new horizontal-panel% [parent panel]))
+    
+    (define ctrl controller)
+    
+    (define start (new button%
+                       [parent button-panel]
+                       [label "<<"]
+                       [callback (lambda (b e)
+                                   (send ctrl set-start-position))]))
+    
+    (define back (new button%
+                      [parent button-panel]
+                      [label "<"]
+                      [callback (lambda (b e)
+                                  (send ctrl set-previous-position))]))
+
+    ; History and next moves
+    (define move-panel (new horizontal-panel% [parent panel]))
+    (define history-panel (new vertical-panel%
+                               [parent move-panel]
+                               [style '(auto-vscroll)]))
+    
+    ; Add history to history-panel and make clickable
+    (define/public (populate-history-panel moves)
+      ; Clear the current contents of the panel
+      (let ([children (send history-panel get-children)])
+        (map (lambda (c) (send history-panel delete-child c)) children))
+      ; For each pair of moves, add a horizontal panel with two buttons
+      (define (add-row ms)
+        (cond [(null? ms) '()]
+              [(null? (cdr ms))
+               (let ([p (new horizontal-panel% [parent history-panel])])
+                 (new button%
+                      [parent p]
+                      [label (car ms)]
+                      [callback (lambda (b e)
+                                  (send ctrl return-to (car ms)))]))]
+              [else
+               (let ([p (new horizontal-panel% [parent history-panel])])
+                 (new button%
+                      [parent p]
+                      [label (car ms)]
+                      [callback (lambda (b e)
+                                  (send ctrl return-to (car ms)))])
+                 (new button%
+                      [parent p]
+                      [label (cadr ms)]
+                      [callback (lambda (b e)
+                                  (send ctrl return-to (cadr ms)))]))
+               (add-row (cddr ms))]))
+      (add-row (reverse moves)))
+    ; TODO: Add next moves panel
+    
+    (super-new)))
+
 ;; The controller class coordinates all of the GUI elements and the repertoire.
 (define controller%
   (class object%
@@ -255,8 +325,15 @@
     (define panel #f)
     ; A text% object for interacting with annotations
     (define editor #f)
+    ; A navigation-panel% object for interacting with the position.
+    (define navigation #f)
     ; A repertoire% object for storing data
     (define repertoire #f)
+    ; History is a list of positions which have been set up on the board.
+    ; The first element of the list is the current board position.
+    (define history '("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"))
+    ; move-history holds a string representation of each move.
+    (define move-history '())
 
     (define/public (set-panel pl)
       (set! panel pl))
@@ -264,9 +341,15 @@
     (define/public (set-editor ed)
       (set! editor ed))
 
+    (define/public (set-navigator nav)
+      (set! navigation nav))
+
     (define/public (set-repertoire r)
       (set! repertoire r))
 
+    (define/public (get-move-history)
+      move-history)
+    
     ;; Whenever a move is made on the chessboard, update the annotation panel
     ;; as necessary.
     (define/public (update-annotation)
@@ -274,26 +357,96 @@
         (let ([text (send repertoire get-annotation pos)])
           (send editor erase)
           (send editor insert text 0))))
+
+    ;; When a move is made on the board, we add it to the position history.
+    (define/public (make-move move)
+      (let ([pos (send panel get-position-fen)])
+        (set! history (cons pos history))
+        (set! move-history
+              (cons (send panel get-move-algebraic move) move-history))
+        (update-annotation)
+        (send navigation populate-history-panel move-history)))
+
+    ;; Return to the last position in the history (if one is available)
+    (define/public (set-previous-position)
+      (let ([cur (car history)])
+        (set! history (cdr history))
+        (if (null? move-history)
+            '()
+            (set! move-history (cdr move-history)))
+        (if (null? history)
+            (set! history (list cur))
+            (begin
+              (send panel set-position (car history))
+              (update-annotation)))))
+    
+    ;; Load an arbitrary position.
+    (define/public (set-position fen)
+      (send panel set-position fen)
+      ; If the position is manually set, we should also clear the history
+      (set! history (list fen))
+      (set! move-history '())
+      (update-annotation))
+
+    ;; Load the start position.
+    (define/public (set-start-position)
+      (set-position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"))
+
+    ;; Return to the position after one of the moves in move-history.
+    (define/public (return-to move)
+      (define (helper hist m-hist)
+        (if (equal? (car m-hist) move)
+            (begin
+              (set-position (car hist))
+              (set! history hist)
+              (set! move-history m-hist)
+              (send navigation populate-history-panel move-history))
+            (helper (cdr hist) (cdr m-hist))))
+      (helper history move-history))
     
     (super-new)))
 
 ;;; Main code
 
+;; The window set up is like this:
+;; +------------+------------+
+;; |            |            |
+;; |            |            |
+;; |   Board    |            |
+;; |            |    Notes   |
+;; |            |            |
+;; +------------+            |
+;; | Navigation |            |
+;; +------------+------------+
+;; Where the navigation panel shows a history of moves played and back buttons.
+
 (define (main)
   (define frame (new frame% [label "Repertoire Explorer"]))
+  ; The main panel allows the user to resize the two sides of the application 
   (define main-panel (new panel:horizontal-dragable% [parent frame]))
+  ; The controller synchronizes the GUI elements and repertoire
   (define controller (new controller%))
+  ; The editor holds the repertoire notes on a position and allows them to be
+  ; edited.
   (define editor (new text%))
   (send controller set-editor editor)
+  ; The left panel allows the user to resize the board and navigation areas.
+  (define left-panel (new panel:vertical-dragable% [parent main-panel]))
   (define panel (new chess-board%
-                     [parent main-panel]
+                     [parent left-panel]
                      [min-width 400]
                      [min-height 400]))
+  (define navigation
+    (new navigation-panel% [controller controller] [parent left-panel]))
   (send controller set-panel panel)
+  (send controller set-navigator navigation)
+  ; Add a callback to the chessboard which tells the controller when a piece is
+  ; moved.
   (send panel set-move-callback
-        (lambda (move) (send controller update-annotation)))
+        (lambda (move) (send controller make-move move)))
   (send controller set-repertoire (new repertoire% [filename "test.json"]))
   (send controller update-annotation)
+  ; The editor canvas is necessary to display the editor.
   (define editor-canvas (new editor-canvas%
                              [parent main-panel]
                              [editor editor]

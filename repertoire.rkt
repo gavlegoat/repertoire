@@ -32,7 +32,7 @@
     ; A JSON string representing an entry. This is ignored if its value is #f,
     ; otherwise the other two initializers are ignored.
     (init [json #f])
-
+    
     ; The textual notes associated with the position
     (define notes annotation)
     ; A list of moves that may be made.
