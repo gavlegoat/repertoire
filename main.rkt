@@ -53,6 +53,9 @@
     ; A callback to be called whenever a piece is moved
     (define move-callback (lambda (move) '()))
 
+    (define/public (get-board-position)
+      board-position)
+    
     (define/public (set-move-callback f)
       (set! move-callback f))
 
@@ -77,18 +80,23 @@
              [ysq (- 7 (quotient y square-size))])
         (cons xsq ysq)))
 
+    (define/public (make-move move)
+      (send board-position make-move (car move) (cdr move))
+      (move-callback move)
+      (set! selected-square '())
+      (set! legal-moves '())
+      (refresh))
+    
     ; Move a piece from selected-square to the square currently under
     ; the cursor if that is a legal move.
     (define/private (place-piece event)
       (let* ([sq (get-sq event)])
         (if (member sq legal-moves)
+            (make-move (cons selected-square sq))
             (begin
-              (send board-position make-move selected-square sq)
-              (move-callback (cons selected-square sq)))
-            '()))
-      (set! selected-square '())
-      (set! legal-moves '())
-      (refresh))
+              (set! selected-square '())
+              (set! legal-moves '())
+              (refresh)))))
 
     ; Determine what to do when the mouse is clicked.
     (define/private (handle-click event)
@@ -247,14 +255,22 @@
               (map draw-dot legal-moves)
               (draw-piece (car selected-square) (cdr selected-square)))
             '())))
+
+    (define/public (reset-mouse)
+      (set! selected-square '())
+      (set! legal-moves '())
+      (refresh))
     
     (super-new)))
 
 (define/contract chess-board+c%
   (class/c
+   [get-board-position (->m (is-a?/c position%))]
    [get-position-fen (->m string?)]
    [set-position (->m string? void?)]
-   [get-move-algebraic (->m (cons/c integer? integer?) string?)])
+   [get-move-algebraic (->m (cons/c integer? integer?) string?)]
+   [make-move (->m (cons/c (cons/c integer? integer?)
+                           (cons/c integer? integer?)) void?)])
   chess-board%)
 
 ;; The navigation panel allows the user to change the position on the board in
@@ -270,8 +286,11 @@
     (init controller)
     (init parent)
 
-    (define panel (new vertical-panel% [parent parent]))
-    (define button-panel (new horizontal-panel% [parent panel]))
+    (define panel (new vertical-panel%
+                       [parent parent]
+                       [stretchable-height #f]))
+    (define button-panel (new horizontal-panel%
+                              [parent panel]))
     
     (define ctrl controller)
     
@@ -288,10 +307,16 @@
                                   (send ctrl set-previous-position))]))
 
     ; History and next moves
-    (define move-panel (new horizontal-panel% [parent panel]))
+    (define move-panel (new horizontal-panel%
+                            [parent panel]))
     (define history-panel (new vertical-panel%
                                [parent move-panel]
-                               [style '(auto-vscroll)]))
+                               [style '(auto-vscroll)]
+                               [min-height 200]))
+
+    (define next-moves-panel (new vertical-panel%
+                                  [parent move-panel]
+                                  [style '(auto-vscroll)]))
     
     ; Add history to history-panel and make clickable
     (define/public (populate-history-panel moves)
@@ -299,17 +324,24 @@
       (let ([children (send history-panel get-children)])
         (map (lambda (c) (send history-panel delete-child c)) children))
       ; For each pair of moves, add a horizontal panel with two buttons
-      (define (add-row ms)
+      (define (add-row ms ind)
+        (define (make-row-panel idx)
+          (let ([p (new horizontal-panel%
+                        [parent history-panel]
+                        [alignment '(left center)]
+                        [stretchable-height #f])])
+            (new message% [label (~a idx #\.)] [parent p])
+            p))
         (cond [(null? ms) '()]
               [(null? (cdr ms))
-               (let ([p (new horizontal-panel% [parent history-panel])])
+               (let ([p (make-row-panel ind)])
                  (new button%
                       [parent p]
                       [label (car ms)]
                       [callback (lambda (b e)
                                   (send ctrl return-to (car ms)))]))]
               [else
-               (let ([p (new horizontal-panel% [parent history-panel])])
+               (let ([p (make-row-panel ind)])
                  (new button%
                       [parent p]
                       [label (car ms)]
@@ -320,15 +352,31 @@
                       [label (cadr ms)]
                       [callback (lambda (b e)
                                   (send ctrl return-to (cadr ms)))]))
-               (add-row (cddr ms))]))
-      (add-row (reverse moves)))
-    ; TODO: Add next moves panel
+               (add-row (cddr ms) (+ ind 1))]))
+      (add-row (reverse moves) 1))
+
+    ;; Add a button to the navigation panel for each move from the current
+    ;; position which is included in the repertoire.
+    (define/public (populate-next-moves moves labels)
+      (let ([children (send next-moves-panel get-children)])
+        (map (lambda (c) (send next-moves-panel delete-child c)) children))
+      (for ([m (map cons moves labels)])
+        (new button%
+             [parent next-moves-panel]
+             [label (cdr m)]
+             [callback (lambda (b e)
+                         (send ctrl advance-board-position (car m))
+                         (send ctrl make-move (car m)))])))
     
     (super-new)))
 
 (define/contract navigation-panel+c%
   (class/c
-   [populate-history-panel (->m (listof string?) void?)])
+   [populate-history-panel (->m (listof string?) void?)]
+   [populate-next-moves
+    (->m (listof (cons/c (cons/c integer? integer?)
+                         (cons/c integer? integer?)))
+         (listof string?) void?)])
   navigation-panel%)
 
 ;; The controller class coordinates all of the GUI elements and the repertoire.
@@ -366,10 +414,20 @@
     ;; Whenever a move is made on the chessboard, update the annotation panel
     ;; as necessary.
     (define/public (update-annotation)
-      (let ([pos (send panel get-position-fen)])
-        (let ([text (send repertoire get-annotation pos)])
+      (send navigation populate-history-panel move-history)
+      (let ([pos (send panel get-position-fen)]
+            [board (send panel get-board-position)])
+        (let ([text (send repertoire get-annotation pos)]
+              [moves (send repertoire get-next-moves pos)])
           (send editor erase)
-          (send editor insert text 0))))
+          (send editor insert text 0)
+          (define (get-label move)
+            (send board make-move (car move) (cdr move))
+            (let ([alg (send board get-algebraic move)])
+              (send board unmake-move)
+              alg))
+          (let ([labels (map get-label moves)])
+            (send navigation populate-next-moves moves labels)))))
 
     ;; When a move is made on the board, we add it to the position history.
     (define/public (make-move move)
@@ -377,8 +435,7 @@
         (set! history (cons pos history))
         (set! move-history
               (cons (send panel get-move-algebraic move) move-history))
-        (update-annotation)
-        (send navigation populate-history-panel move-history)))
+        (update-annotation)))
 
     ;; Return to the last position in the history (if one is available)
     (define/public (set-previous-position)
@@ -389,9 +446,8 @@
             (set! move-history (cdr move-history)))
         (if (null? history)
             (set! history (list cur))
-            (begin
-              (send panel set-position (car history))
-              (update-annotation)))))
+            (send panel set-position (car history)))
+        (update-annotation)))
     
     ;; Load an arbitrary position.
     (define/public (set-position fen)
@@ -413,9 +469,17 @@
               (set-position (car hist))
               (set! history hist)
               (set! move-history m-hist)
-              (send navigation populate-history-panel move-history))
+              (update-annotation))
             (helper (cdr hist) (cdr m-hist))))
       (helper history move-history))
+
+    ;; Make a move on the board. Note that this is different from make-move,
+    ;; which assumes a moves has already been made and then updates all other
+    ;; information accordingly.
+    (define/public (advance-board-position move)
+      (let ([pos (send panel get-board-position)])
+        (send pos make-move (car move) (cdr move))
+        (send panel reset-mouse)))
     
     (super-new)))
 
@@ -427,6 +491,8 @@
    [set-repertoire (->m (is-a?/c repertoire%) void?)]
    [get-move-history (->m (listof string?))]
    [update-annotation (->m void?)]
+   [advance-board-position (->m (cons/c (cons/c integer? integer?)
+                                       (cons/c integer? integer?)) void?)]
    [make-move (->m (cons/c (cons/c integer? integer?)
                            (cons/c integer? integer?)) void?)]
    [set-previous-position (->m void?)]

@@ -53,6 +53,9 @@
 
     (define/public (get-annotation)
       notes)
+
+    (define/public (get-next-moves)
+      next-moves)
     
     (super-new)))
 
@@ -97,5 +100,19 @@
       (if (hash-has-key? table pos)
           (send (hash-ref table pos) get-annotation)
           ""))
+
+    (define/public (get-next-moves pos)
+      (if (hash-has-key? table pos)
+          (send (hash-ref table pos) get-next-moves)
+          '()))
     
     (super-new)))
+
+(define/contract repertoire+c%
+  (class/c
+   [write-to-file (->m string? void?)]
+   [get-annotation (->m string? string?)]
+   [get-next-moves (->m string?
+                        (listof (cons/c (cons/c integer? integer?)
+                                        (cons/c integer? integer?))))])
+  repertoire%)

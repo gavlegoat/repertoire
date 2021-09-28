@@ -191,16 +191,15 @@
                 (equal? (cdr move) last-ep-sq))
            ; En passant
            (let ([start-file (integer->char (+ (caar move) 97))])
-             (string-append (list->string (list start-file))
-                            "x"
-                            (pair->algebraic (cdr move))))]
+             (~a start-file
+                 "x"
+                 (pair->algebraic (cdr move))))]
           [(equal? piece-code "")
            ; Pawn move -- There can be no ambiguity in pawn moves.
            (if (hash-has-key? last-board-pos (cdr move))
-               (string-append
-                (list->string (list (integer->char (+ (caar move) 97))))
-                "x"
-                (pair->algebraic (cdr move)))
+               (~a (integer->char (+ (caar move) 97))
+                   "x"
+                   (pair->algebraic (cdr move)))
                (pair->algebraic (cdr move)))]
           [else
            ; This is the regular case.
@@ -244,30 +243,29 @@
                   (if (hash-has-key? last-board-pos (cdr move)) "x" "")])
              (if (null? other-pieces)
                  ; There is no ambiguity
-                 (string-append piece-code
-                                capture-string
-                                (pair->algebraic (cdr move)))
+                 (~a piece-code
+                     capture-string
+                     (pair->algebraic (cdr move)))
                  (if (ormap (lambda (p) (equal? (car p) (caar move)))
                             other-pieces)
                      ; File is not enough to distinguish
                      (if (ormap (lambda (p) (equal? (cdr p) (cdar move)))
                                 other-pieces)
                          ; Rank is not enough to distinguish
-                         (string-append piece-code
-                                        (pair->algebraic (car move))
-                                        capture-string
-                                        (pair->algebraic (cdr move)))
+                         (~a piece-code
+                             (pair->algebraic (car move))
+                             capture-string
+                             (pair->algebraic (cdr move)))
                          ; Rank is enough to distinguish
-                         (string-append
-                          piece-code
-                          (substring (pair->algebraic (car move)) 1 2)
-                          capture-string
-                          (pair->algebraic (cdr move))))
+                         (~a piece-code
+                             (string-ref (pair->algebraic (car move)) 1)
+                             capture-string
+                             (pair->algebraic (cdr move))))
                      ; File is enough to distinguish
-                     (string-append piece-code
-                                    (substring (pair->algebraic (car move)) 0 1)
-                                    capture-string
-                                    (pair->algebraic (cdr move))))))])))
+                     (~a piece-code
+                         (string-ref (pair->algebraic (car move)) 0)
+                         capture-string
+                         (pair->algebraic (cdr move))))))])))
 
     ; NOTE: it is possible (though rare) for situations to come up where both
     ; file and the rank are needed to distinguish different moves. For example,
@@ -841,7 +839,7 @@
                  ['white-queen  (queen-moves pos 'white from-sq)]
                  ['white-king   (king-moves pos 'white from-sq)]
                  ['white-pawn   (pawn-moves pos 'white from-sq)]
-                 [else (string-append (raise "Unknown piece symbol")
+                 [else (raise (string-append "Unknown piece symbol")
                                     (symbol->string piece))])])
     (filter look-for-check pseudo)))
 
@@ -849,21 +847,3 @@
 (define/contract (is-legal-move piece from-sq to-sq)
   (-> piece? (cons/c integer? integer?) (cons/c integer? integer?) boolean?)
   (member to-sq (get-legal-moves piece from-sq)))
-
-;; Convert a full FEN string to a position
-(define/contract (fen->position fen)
-  (-> string? (is-a?/c position%))
-  (let* ([parts (string-split fen)]
-         [to-move (if (equal? (cadr parts) "w") 'white 'black)]
-         [castle
-          (list
-           (cons '(white . kingside) (string-contains? (caddr parts) "K"))
-           (cons '(white . queenside) (string-contains? (caddr parts) "Q"))
-           (cons '(black . kingside) (string-contains? (caddr parts) "k"))
-           (cons '(black . queenside) (string-contains? (caddr parts) "q")))]
-         [en-passant (algebraic->pair (cadddr parts))])
-    (new position%
-         [position (car parts)]
-         [en-passant en-passant]
-         [castling castle]
-         [side-to-move to-move])))
