@@ -12,7 +12,7 @@
 ;; start and end squares, for example ((4 . 1) . (4 . 3)) is converted to
 ;; "e2-e4".
 (define/contract (move->jsexpr move)
-  (-> (cons/c (cons/c integer? integer?) (cons/c integer? integer?)) jsexpr?)
+  (-> move? jsexpr?)
   (let ([from-sq (car move)]
         [to-sq (cdr move)])
     (string-append (pair->algebraic from-sq) "-" (pair->algebraic to-sq))))
@@ -20,7 +20,7 @@
 ;; Convert a move in string format to a move in pair format. For example
 ;; "e2-e4" becomes ((4 . 1) . (4 . 3))
 (define/contract (jsexpr->move js)
-  (-> jsexpr? (cons/c (cons/c integer? integer?) (cons/c integer? integer?)))
+  (-> jsexpr? move?)
   (let ([from-sq (substring js 0 2)]
         [to-sq (substring js 3)])
     (cons (algebraic->pair from-sq) (algebraic->pair to-sq))))
@@ -56,6 +56,17 @@
 
     (define/public (get-next-moves)
       next-moves)
+
+    (define/public (set-annotation str)
+      (set! notes str))
+
+    (define/public (add-next-move move)
+      (if (member move next-moves)
+          (void)
+          (set! next-moves (cons move next-moves))))
+
+    (define/public (set-next-moves moves)
+      (set! next-moves moves))
     
     (super-new)))
 
@@ -74,25 +85,26 @@
     ; otherwise entries is ignored.
     (init [filename #f])
 
-    (define table (make-immutable-hash entries))
+    (define table (make-hash entries))
 
     (if filename
         (let ([in (open-input-file filename)])
           (define instr (port->string in #:close? #t))
           (let ([json-table (string->jsexpr instr)])
-            (set! table (make-immutable-hash
+            (set! table (make-hash
                          (hash-map
                           json-table
                           (lambda (k v)
                             (cons (symbol->string k)
                                   (new repertoire-entry% [json v]))))))))
-        '())
+        (void))
 
     ; Write this repertoire to a file.
     (define/public (write-to-file filename)
-      (let ([es (make-immutable-hash
-                 (hash-map (lambda (k v) (cons k (send v get-json))) table))]
-            [out (open-output-file filename)])
+      (let ([es (make-hash
+                 (hash-map table (lambda (k v) (cons (string->symbol k)
+                                                     (send v get-json)))))]
+            [out (open-output-file filename #:exists 'replace)])
         (display (jsexpr->string es) out)
         (close-output-port out)))        
 
@@ -105,6 +117,21 @@
       (if (hash-has-key? table pos)
           (send (hash-ref table pos) get-next-moves)
           '()))
+
+    (define/public (set-annotation pos str)
+      (if (hash-has-key? table pos)
+          (send (hash-ref table pos) set-annotation str)
+          (hash-set! table pos (new repertoire-entry% [annotation str]))))
+
+    (define/public (set-next-moves pos moves)
+      (if (hash-has-key? table pos)
+          (send (hash-ref table pos) set-next-moves moves)
+          (hash-set! table pos (new repertoire-entry% [moves moves]))))
+
+    (define/public (add-move pos move)
+      (if (hash-has-key? table pos)
+          (send (hash-ref table pos) add-next-move move)
+          (hash-set! table pos (new repertoire-entry% [moves (list move)]))))
     
     (super-new)))
 
@@ -112,7 +139,8 @@
   (class/c
    [write-to-file (->m string? void?)]
    [get-annotation (->m string? string?)]
-   [get-next-moves (->m string?
-                        (listof (cons/c (cons/c integer? integer?)
-                                        (cons/c integer? integer?))))])
+   [get-next-moves (->m string? (listof move?))]
+   [set-annotation (->m string? string? void?)]
+   [set-next-moves (->m string? (listof move?) void?)]
+   [add-move (->m string? move? void?)])
   repertoire%)

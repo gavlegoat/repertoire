@@ -6,16 +6,18 @@
 (provide position%
          piece?
          color?
+         square?
+         move?
          (contract-out
           [get-legal-moves
-           (-> (is-a?/c position%) symbol? (cons/c integer? integer?)
-               (listof (cons/c integer? integer?)))]
+           (-> (is-a?/c position%) symbol? square?
+               (listof square?))]
           [get-color
            (-> piece? color?)]
           [algebraic->pair
-           (-> string? (cons/c integer? integer?))]
+           (-> string? square?)]
           [pair->algebraic
-           (-> (cons/c integer? integer?) string?)]))
+           (-> square? string?)]))
 
 (require "util.rkt")
 
@@ -32,6 +34,10 @@
         'black-queen
         'black-king
         'black-pawn))
+
+(define square? (cons/c integer? integer?))
+
+(define move? (cons/c square? square?))
 
 (define color?
   (or/c 'white 'black))
@@ -556,16 +562,15 @@
 ;; A contract defining the interface of position%
 (define/contract position+c%
   (class/c
-   [has-piece-at? (->m (cons/c integer? integer?) boolean?)]
-   [get-piece-at (->m (cons/c integer? integer?) piece?)]
-   [get-ep-sq (->m (or/c (cons/c integer? integer?) null?))]
+   [has-piece-at? (->m square? boolean?)]
+   [get-piece-at (->m square? piece?)]
+   [get-ep-sq (->m (or/c square? null?))]
    [get-to-move (->m color?)]
-   [get-algebraic (->m (cons/c (cons/c integer? integer?)
-                               (cons/c integer? integer?)) string?)]
+   [get-algebraic (->m move? string?)]
    [queenside-castle? (->m color? boolean?)]
    [kingside-castle? (->m color? boolean?)]
-   [find-piece (->m piece? (listof (cons/c integer? integer?)))]
-   [piece-at? (->m piece? (cons/c integer? integer?) boolean?)]
+   [find-piece (->m piece? (listof square?))]
+   [piece-at? (->m piece? square? boolean?)]
    [unmake-move (->m void?)]
    [get-fen (->m string?)])
   position%)
@@ -592,9 +597,9 @@
 ;; Generate all pseudolegal rook moves starting from the given square in the
 ;; given position.
 (define/contract (rook-moves pos color from-sq #:allow-self-capture [self #f])
-  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+  (->* ((is-a?/c position%) color? square?)
        (#:allow-self-capture boolean?)
-       (listof (cons/c integer? integer?)))
+       (listof square?))
   (let ([right
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)])
            #:break (and (send pos has-piece-at? (cons i (cdr from-sq)))
@@ -647,9 +652,9 @@
 
 ;; Generate pseudolegal knight moves.
 (define/contract (knight-moves pos color from-sq #:allow-self-capture [self #f])
-  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+  (->* ((is-a?/c position%) color? square?)
        (#:allow-self-capture boolean?)
-       (listof (cons/c integer? integer?)))
+       (listof square?))
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
@@ -665,9 +670,9 @@
 
 ;; Generate pseudolegal bishop moves.
 (define/contract (bishop-moves pos color from-sq #:allow-self-capture [self #f])
-  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+  (->* ((is-a?/c position%) color? square?)
        (#:allow-self-capture boolean?)
-       (listof (cons/c integer? integer?)))
+       (listof square?))
   (let ([upright
          (for/list ([i (in-range (+ 1 (car from-sq)) 8)]
                     [j (in-range (+ 1 (cdr from-sq)) 8)])
@@ -720,17 +725,17 @@
 
 ;; Generate pseudolegal queen moves.
 (define/contract (queen-moves pos color from-sq #:allow-self-capture [self #f])
-  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+  (->* ((is-a?/c position%) color? square?)
        (#:allow-self-capture boolean?)
-       (listof (cons/c integer? integer?)))
+       (listof square?))
   (append (rook-moves pos color from-sq #:allow-self-capture self)
           (bishop-moves pos color from-sq #:allow-self-capture self)))
 
 ;; Generate pseudolegal king moves.
 (define/contract (king-moves pos color from-sq #:allow-self-capture [self #f])
-  (->* ((is-a?/c position%) color? (cons/c integer? integer?))
+  (->* ((is-a?/c position%) color? square?)
        (#:allow-self-capture boolean?)
-       (listof (cons/c integer? integer?)))
+       (listof square?))
   (define (map-fun offset)
     (let ([dest (cons (+ (car from-sq) (car offset))
                       (+ (cdr from-sq) (cdr offset)))])
@@ -755,8 +760,8 @@
 
 ;; Generate pseudolegal pawn moves.
 (define/contract (pawn-moves pos color from-sq)
-  (-> (is-a?/c position%) color? (cons/c integer? integer?)
-      (listof (cons/c integer? integer?)))
+  (-> (is-a?/c position%) color? square?
+      (listof square?))
   (let ([forward
          (if (equal? color 'white)
              (if (send pos has-piece-at?
@@ -809,7 +814,7 @@
 
 ;; Get a list of all the locations at which a given piece appears.
 (define/contract (find-piece pos piece)
-  (-> (is-a?/c position%) piece? (listof (cons/c integer? integer?)))
+  (-> (is-a?/c position%) piece? (listof square?))
   (append
    (for*/list ([i (in-range 8)]
                [j (in-range 8)]
@@ -845,5 +850,5 @@
 
 ;; Determine whether a given move is legal.
 (define/contract (is-legal-move piece from-sq to-sq)
-  (-> piece? (cons/c integer? integer?) (cons/c integer? integer?) boolean?)
+  (-> piece? square? square? boolean?)
   (member to-sq (get-legal-moves piece from-sq)))

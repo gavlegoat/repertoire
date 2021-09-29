@@ -167,7 +167,7 @@
         [(send event button-down? 'left) (handle-click event)]
         [(send event button-up? 'left) (handle-release event)]
         [(send event dragging?) (handle-dragging event)]
-        [else (void '())]))
+        [else (void)]))
 
     ; Draw the appropriate piece at the given square.
     (define/private (draw-piece i j)
@@ -256,6 +256,7 @@
               (draw-piece (car selected-square) (cdr selected-square)))
             '())))
 
+    ;; If the user has clicked a square to start a move, forget that square.
     (define/public (reset-mouse)
       (set! selected-square '())
       (set! legal-moves '())
@@ -268,9 +269,9 @@
    [get-board-position (->m (is-a?/c position%))]
    [get-position-fen (->m string?)]
    [set-position (->m string? void?)]
-   [get-move-algebraic (->m (cons/c integer? integer?) string?)]
-   [make-move (->m (cons/c (cons/c integer? integer?)
-                           (cons/c integer? integer?)) void?)])
+   [get-move-algebraic (->m square? string?)]
+   [make-move (->m move? void?)]
+   [reset-mouse (->m void?)])
   chess-board%)
 
 ;; The navigation panel allows the user to change the position on the board in
@@ -374,9 +375,7 @@
   (class/c
    [populate-history-panel (->m (listof string?) void?)]
    [populate-next-moves
-    (->m (listof (cons/c (cons/c integer? integer?)
-                         (cons/c integer? integer?)))
-         (listof string?) void?)])
+    (->m (listof move?) (listof string?) void?)])
   navigation-panel%)
 
 ;; The controller class coordinates all of the GUI elements and the repertoire.
@@ -395,7 +394,10 @@
     (define history '("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"))
     ; move-history holds a string representation of each move.
     (define move-history '())
-
+    ; filename is the name of the file associated with the current repertoire,
+    ; if one exists
+    (define filename #f)
+    
     (define/public (set-panel pl)
       (set! panel pl))
 
@@ -410,6 +412,24 @@
 
     (define/public (get-move-history)
       move-history)
+
+    ;; Update the given position in the repertoire with the current contents of
+    ;; the editor.
+    (define/private (update-repertoire-annotation pos)
+      (send repertoire set-annotation pos (send editor get-text)))
+    
+    ;; Send all changes which have been made in the text panel to the
+    ;; repertoire. If the current position is not in the repertoire, add it and
+    ;; add a link from the previous position.
+    ;; NOTE: At the point where this is called, the text editor has not been
+    ;; changed to the new position, but the board panel has.
+    (define/private (update-repertoire-last move)
+      ; Note that this function should never be called when (cdr history) is
+      ; null.
+      (let ([last-pos (cadr history)])
+        (update-repertoire-annotation last-pos)
+        ; Update the move mapping.
+        (send repertoire add-move last-pos move)))
     
     ;; Whenever a move is made on the chessboard, update the annotation panel
     ;; as necessary.
@@ -435,10 +455,12 @@
         (set! history (cons pos history))
         (set! move-history
               (cons (send panel get-move-algebraic move) move-history))
+        (update-repertoire-last move)
         (update-annotation)))
 
     ;; Return to the last position in the history (if one is available)
     (define/public (set-previous-position)
+      (update-repertoire-annotation (send panel get-position-fen))
       (let ([cur (car history)])
         (set! history (cdr history))
         (if (null? move-history)
@@ -451,6 +473,7 @@
     
     ;; Load an arbitrary position.
     (define/public (set-position fen)
+      (update-repertoire-annotation (send panel get-position-fen))
       (send panel set-position fen)
       ; If the position is manually set, we should also clear the history
       (set! history (list fen))
@@ -463,6 +486,7 @@
 
     ;; Return to the position after one of the moves in move-history.
     (define/public (return-to move)
+      (update-repertoire-annotation (send panel get-position-fen))
       (define (helper hist m-hist)
         (if (equal? (car m-hist) move)
             (begin
@@ -480,7 +504,39 @@
       (let ([pos (send panel get-board-position)])
         (send pos make-move (car move) (cdr move))
         (send panel reset-mouse)))
+
+    ;; Save the repertoire at the given filename
+    (define/private (save-to-file fn)
+      (update-repertoire-annotation (car history))
+      (send repertoire write-to-file fn)
+      (set! filename fn))
     
+    ;; Save the repertoire. If there is a filename associated with the current
+    ;; repertoire, we save it there, otherwise open a dialog to ask the user
+    ;; where to save.
+    (define/public (save-repertoire)
+      (if filename
+          (save-to-file filename)
+          (save-repertoire-as)))
+
+    ;; Open a dialog to ask the user where to save the repertoire.
+    (define/public (save-repertoire-as)
+      (let ([fn (get-file "Save...")])
+        (if fn
+            (save-to-file fn)
+            ; If the user cancels the dialog, do nothing
+            (void))))
+
+    ;; Open a dialog to select a file then open a repertoire from that file.
+    (define/public (open-repertoire)
+      (let ([fn (get-file "Open...")])
+        (if fn
+            (begin
+              (set-repertoire (new repertoire% [filename fn]))
+              (update-annotation)
+              (set! filename fn))
+            (void))))
+
     (super-new)))
 
 (define/contract controller+c%
@@ -491,14 +547,15 @@
    [set-repertoire (->m (is-a?/c repertoire%) void?)]
    [get-move-history (->m (listof string?))]
    [update-annotation (->m void?)]
-   [advance-board-position (->m (cons/c (cons/c integer? integer?)
-                                       (cons/c integer? integer?)) void?)]
-   [make-move (->m (cons/c (cons/c integer? integer?)
-                           (cons/c integer? integer?)) void?)]
+   [advance-board-position (->m move? void?)]
+   [make-move (->m move? void?)]
    [set-previous-position (->m void?)]
    [set-position (->m string? void?)]
    [set-start-position (->m void?)]
-   [return-to (->m string? void?)])
+   [return-to (->m string? void?)]
+   [save-repertoire (->m void?)]
+   [save-repertoire-as (->m void?)]
+   [open-repertoire (->m void?)])
   controller%)
 
 ;;; Main code
@@ -517,10 +574,31 @@
 
 (define (main)
   (define frame (new frame% [label "Repertoire Explorer"]))
-  ; The main panel allows the user to resize the two sides of the application 
-  (define main-panel (new panel:horizontal-dragable% [parent frame]))
   ; The controller synchronizes the GUI elements and repertoire
   (define controller (new controller%))
+  (define menu-bar (new menu-bar% [parent frame]))
+  (define file (new menu% [label "&File"] [parent menu-bar]))
+  ; TODO: Menu item callbacks
+  (new menu-item%
+       [label "&Save"]
+       [parent file]
+       [shortcut #\s]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send controller save-repertoire))])
+  (new menu-item%
+       [label "Save &As..."]
+       [parent file]
+       [shortcut #\s]
+       [shortcut-prefix '(ctl shift)]
+       [callback (lambda (i e) (send controller save-repertoire-as))])
+  (new menu-item%
+       [label "&Open..."]
+       [parent file]
+       [shortcut #\o]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send controller open-repertoire))])
+  ; The main panel allows the user to resize the two sides of the application 
+  (define main-panel (new panel:horizontal-dragable% [parent frame]))
   ; The editor holds the repertoire notes on a position and allows them to be
   ; edited.
   (define editor (new text%))
@@ -539,7 +617,7 @@
   ; moved.
   (send panel set-move-callback
         (lambda (move) (send controller make-move move)))
-  (send controller set-repertoire (new repertoire% [filename "test.json"]))
+  (send controller set-repertoire (new repertoire%))
   (send controller update-annotation)
   ; The editor canvas is necessary to display the editor.
   (define editor-canvas (new editor-canvas%
