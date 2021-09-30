@@ -397,6 +397,14 @@
     ; filename is the name of the file associated with the current repertoire,
     ; if one exists
     (define filename #f)
+    ; This is true if the repertoire has been edited since the last time it was
+    ; saved.
+    (define edited #f)
+    ; The top-level frame for this program
+    (define frame #f)
+
+    (define/public (set-frame f)
+      (set! frame f))
     
     (define/public (set-panel pl)
       (set! panel pl))
@@ -455,6 +463,9 @@
         (set! history (cons pos history))
         (set! move-history
               (cons (send panel get-move-algebraic move) move-history))
+        (if (send repertoire has-position pos)
+            (void)
+            (set-edited #t))
         (update-repertoire-last move)
         (update-annotation)))
 
@@ -509,7 +520,9 @@
     (define/private (save-to-file fn)
       (update-repertoire-annotation (car history))
       (send repertoire write-to-file fn)
-      (set! filename fn))
+      (set! filename fn)
+      (send frame modified #f)
+      (set! edited #f))
     
     ;; Save the repertoire. If there is a filename associated with the current
     ;; repertoire, we save it there, otherwise open a dialog to ask the user
@@ -527,15 +540,31 @@
             ; If the user cancels the dialog, do nothing
             (void))))
 
+    (define/private (confirm-discard)
+      (if edited
+          (message-box
+           "Changed"
+           "The repertoire has changed. Are you sure you want to discard changes and continue?"
+           frame
+           '(ok-cancel caution))
+          'ok))
+
     ;; Open a dialog to select a file then open a repertoire from that file.
     (define/public (open-repertoire)
-      (let ([fn (get-file "Open...")])
-        (if fn
-            (begin
-              (set-repertoire (new repertoire% [filename fn]))
-              (update-annotation)
-              (set! filename fn))
+      (let ([conf (confirm-discard)])
+        (if (equal? conf 'ok)
+            (let ([fn (get-file "Open...")])
+              (if fn
+                  (begin
+                    (set-repertoire (new repertoire% [filename fn]))
+                    (update-annotation)
+                    (set! filename fn))
+                  (void)))
             (void))))
+
+    (define/public (set-edited ed)
+      (set! edited ed)
+      (send frame modified #t))
 
     (super-new)))
 
@@ -555,8 +584,39 @@
    [return-to (->m string? void?)]
    [save-repertoire (->m void?)]
    [save-repertoire-as (->m void?)]
-   [open-repertoire (->m void?)])
+   [open-repertoire (->m void?)]
+   [set-edited (->m boolean? void?)])
   controller%)
+
+(define custom-text%
+  (class text%
+    (init-field controller)
+    
+    (define (after-insert start len)
+      (send controller set-edited #t))
+    (augment after-insert)
+    
+    (define (after-delete start len)
+      (send controller set-edited #t))
+    (augment after-delete)
+
+    (super-new)))
+
+(define custom-frame%
+  (class frame%
+    (inherit modified)
+    (define/augment (can-close?)
+      (if (modified)
+          (let ([conf (message-box
+                       "Changed"
+                       "The repertoire has changed. Are you sure you want to discard changes and continue?"
+                       this
+                       '(ok-cancel caution))])
+            (if (equal? conf 'ok)
+                #t
+                #f))
+          #t))
+    (super-new)))
 
 ;;; Main code
 
@@ -573,12 +633,13 @@
 ;; Where the navigation panel shows a history of moves played and back buttons.
 
 (define (main)
-  (define frame (new frame% [label "Repertoire Explorer"]))
+  (define frame (new custom-frame% [label "Repertoire Explorer"]))
   ; The controller synchronizes the GUI elements and repertoire
   (define controller (new controller%))
+  (send controller set-frame frame)
+  (define editor (new custom-text% [controller controller]))
   (define menu-bar (new menu-bar% [parent frame]))
   (define file (new menu% [label "&File"] [parent menu-bar]))
-  ; TODO: Menu item callbacks
   (new menu-item%
        [label "&Save"]
        [parent file]
@@ -597,11 +658,49 @@
        [shortcut #\o]
        [shortcut-prefix '(ctl)]
        [callback (lambda (i e) (send controller open-repertoire))])
+  (define edit (new menu% [label "&Edit"] [parent menu-bar]))
+  (new menu-item%
+       [label "&Undo"]
+       [parent edit]
+       [shortcut #\z]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operation 'undo))])
+  (new menu-item%
+       [label "&Redo"]
+       [parent edit]
+       [shortcut #\y]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operation 'redo))])
+  (new separator-menu-item% [parent edit])
+  (new menu-item%
+       [label "Cu&t"]
+       [parent edit]
+       [shortcut #\x]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operation 'cut))])
+  (new menu-item%
+       [label "&Copy"]
+       [parent edit]
+       [shortcut #\c]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operatino 'copy))])
+  (new menu-item%
+       [label "&Paste"]
+       [parent edit]
+       [shortcut #\v]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operatino 'paste))])
+  (new menu-item%
+       [label "Select &All"]
+       [parent edit]
+       [shortcut #\a]
+       [shortcut-prefix '(ctl)]
+       [callback (lambda (i e) (send editor do-edit-operatino 'select-all))])
+  
   ; The main panel allows the user to resize the two sides of the application 
   (define main-panel (new panel:horizontal-dragable% [parent frame]))
   ; The editor holds the repertoire notes on a position and allows them to be
   ; edited.
-  (define editor (new text%))
   (send controller set-editor editor)
   ; The left panel allows the user to resize the board and navigation areas.
   (define left-panel (new panel:vertical-dragable% [parent main-panel]))

@@ -132,6 +132,9 @@
       (if (hash-has-key? table pos)
           (send (hash-ref table pos) add-next-move move)
           (hash-set! table pos (new repertoire-entry% [moves (list move)]))))
+
+    (define/public (has-position pos)
+      (hash-has-key? table pos)) 
     
     (super-new)))
 
@@ -142,5 +145,6 @@
    [get-next-moves (->m string? (listof move?))]
    [set-annotation (->m string? string? void?)]
    [set-next-moves (->m string? (listof move?) void?)]
-   [add-move (->m string? move? void?)])
+   [add-move (->m string? move? void?)]
+   [has-position (->m string? boolean?)])
   repertoire%)
